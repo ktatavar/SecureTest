@@ -13,13 +13,9 @@ packages:
   - curl
   - gnupg
   - ufw
+  - awscli
 
-users:
-  - name: mongodb-admin
-    sudo: ALL=(ALL) NOPASSWD:ALL
-    shell: /bin/bash
-    ssh_authorized_keys:
-      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC... # Add your SSH public key here
+# Use default ubuntu user (EC2 key pair will be automatically added by AWS)
 
 # Overly permissive CSP permissions (simulated via IAM role)
 # In actual deployment, attach IAM role with permissions like:
@@ -30,11 +26,12 @@ users:
 # - iam:AttachRolePolicy
 
 runcmd:
-  # Install MongoDB 4.4.18 (OUTDATED)
-  - wget -qO - https://www.mongodb.org/static/pgp/server-4.4.asc | apt-key add -
-  - echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu focal/mongodb-org/4.4 multiverse" | tee /etc/apt/sources.list.d/mongodb-org-4.4.list
-  - apt-get update
-  - DEBIAN_FRONTEND=noninteractive apt-get install -y mongodb-org=4.4.18 mongodb-org-server=4.4.18 mongodb-org-shell=4.4.18
+  # Install MongoDB 4.0.28 (OUTDATED - compatible with Ubuntu 18.04)
+  - wget -qO - https://www.mongodb.org/static/pgp/server-4.0.asc | apt-key add -
+  - wget -qO - https://www.mongodb.org/static/pgp/server-6.0.asc | apt-key add -
+  - echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu bionic/mongodb-org/4.0 multiverse" | tee /etc/apt/sources.list.d/mongodb-org-4.0.list
+  - apt-get update --allow-insecure-repositories
+  - DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-unauthenticated mongodb-org=4.0.28 mongodb-org-server=4.0.28 mongodb-org-shell=4.0.28
   
   # Configure MongoDB (INSECURE - bind to all interfaces)
   - |
@@ -53,6 +50,33 @@ runcmd:
   # Start MongoDB
   - systemctl start mongod
   - systemctl enable mongod
+  
+  # Setup MongoDB backups to S3
+  - |
+    cat > /usr/local/bin/backup-mongodb.sh << 'BACKUP_SCRIPT'
+    #!/bin/bash
+    set -e
+    BACKUP_DIR="/var/backups/mongodb"
+    TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+    BACKUP_NAME="mongodb_backup_${TIMESTAMP}"
+    S3_BUCKET="mongodb-backups-wiz-512231857943"
+    S3_REGION="us-east-1"
+    
+    mkdir -p ${BACKUP_DIR}
+    mongodump --out="${BACKUP_DIR}/${BACKUP_NAME}" --gzip
+    cd ${BACKUP_DIR}
+    tar -czf "${BACKUP_NAME}.tar.gz" "${BACKUP_NAME}"
+    rm -rf "${BACKUP_NAME}"
+    
+    aws s3 cp "${BACKUP_DIR}/${BACKUP_NAME}.tar.gz" "s3://${S3_BUCKET}/${BACKUP_NAME}.tar.gz" --region ${S3_REGION}
+    
+    find ${BACKUP_DIR} -name "mongodb_backup_*.tar.gz" -mtime +7 -delete
+    echo "Backup completed: ${BACKUP_NAME}.tar.gz"
+    BACKUP_SCRIPT
+  - chmod +x /usr/local/bin/backup-mongodb.sh
+  - echo "*/5 * * * * /usr/local/bin/backup-mongodb.sh >> /var/log/mongodb-backup.log 2>&1" | crontab -
+  - touch /var/log/mongodb-backup.log
+  - chmod 644 /var/log/mongodb-backup.log
   
   # Enable SSH password authentication (INSECURE)
   - sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config

@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: todo-app
-        image: todo-app:latest  # Replace with your container registry image
+        image: 512231857943.dkr.ecr.us-east-1.amazonaws.com/todo-app:latest
         imagePullPolicy: Always
         ports:
         - containerPort: 3000

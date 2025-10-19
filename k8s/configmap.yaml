@@ -4,5 +4,5 @@ metadata:
   name: todo-app-config
   namespace: todo-app
 data:
-  MONGODB_URI: "mongodb://mongodb-vm-service:27017/todoapp"
+  MONGODB_URI: "mongodb://18.212.74.58:27017/todoapp"
   PORT: "3000"
