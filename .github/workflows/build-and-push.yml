@@ -19,6 +19,7 @@ on:
 env:
   IMAGE_NAME: todo-app
   AWS_REGION: us-east-1
+  ROLE_NAME: GitHubActionsECRRole  # Standard role name
 
 jobs:
   build-and-push:
@@ -35,10 +36,19 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       
+      - name: Derive AWS Role ARN
+        id: aws-config
+        run: |
+          # Auto-derive role ARN from account ID
+          AWS_ACCOUNT_ID="${{ secrets.AWS_ACCOUNT_ID }}"
+          AWS_ROLE_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:role/${{ env.ROLE_NAME }}"
+          echo "role-arn=${AWS_ROLE_ARN}" >> $GITHUB_OUTPUT
+          echo "✅ Using Role: ${AWS_ROLE_ARN}"
+      
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-to-assume: ${{ steps.aws-config.outputs.role-arn }}
           aws-region: ${{ env.AWS_REGION }}
       
       - name: Login to Amazon ECR
