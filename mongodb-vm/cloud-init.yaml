@@ -1,0 +1,62 @@
+#cloud-config
+# Cloud-init configuration for MongoDB VM
+# This sets up an OUTDATED Linux version with MongoDB
+
+# Use Ubuntu 18.04 LTS (outdated - released in 2018, EOL April 2023)
+# Current LTS is 22.04/24.04, so this is 1+ years outdated
+
+package_update: true
+package_upgrade: false  # Don't upgrade to keep system outdated
+
+packages:
+  - wget
+  - curl
+  - gnupg
+  - ufw
+
+users:
+  - name: mongodb-admin
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC... # Add your SSH public key here
+
+# Overly permissive CSP permissions (simulated via IAM role)
+# In actual deployment, attach IAM role with permissions like:
+# - ec2:RunInstances
+# - ec2:CreateSecurityGroup
+# - ec2:AuthorizeSecurityGroupIngress
+# - iam:CreateRole
+# - iam:AttachRolePolicy
+
+runcmd:
+  # Download and run MongoDB setup script
+  - wget -O /tmp/setup-mongodb.sh https://raw.githubusercontent.com/your-repo/setup-mongodb.sh
+  - chmod +x /tmp/setup-mongodb.sh
+  - /tmp/setup-mongodb.sh
+  
+  # Enable SSH password authentication (INSECURE)
+  - sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+  - systemctl restart sshd
+  
+  # Set weak root password (INSECURE)
+  - echo "root:Password123" | chpasswd
+
+write_files:
+  - path: /etc/motd
+    content: |
+      ================================================
+      MongoDB Database Server - OUTDATED CONFIGURATION
+      ================================================
+      
+      WARNING: This VM is intentionally misconfigured
+      for security testing purposes.
+      
+      - Ubuntu 18.04 LTS (OUTDATED)
+      - MongoDB 4.4.18 (OUTDATED)
+      - SSH exposed to internet
+      - Overly permissive IAM permissions
+      
+      ================================================
+
+final_message: "MongoDB VM setup complete after $UPTIME seconds"

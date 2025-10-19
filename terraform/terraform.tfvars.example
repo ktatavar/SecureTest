@@ -1,0 +1,22 @@
+# Terraform Variables Configuration
+# Copy this file to terraform.tfvars and update with your values
+
+aws_region = "us-east-1"
+
+cluster_name = "wiz-exercise-cluster"
+
+s3_backup_bucket_name = "mongodb-backups-insecure-unique-12345"  # Must be globally unique
+
+# Ubuntu 18.04 AMI IDs by region (OUTDATED - for exercise purposes)
+# us-east-1: ami-0a313d6098716f372
+# us-west-2: ami-0d1cd67c26f5fca19
+# eu-west-1: ami-0dad359ff462124ca
+# Update with the correct AMI ID for your region
+
+ubuntu_1804_ami = "ami-0a313d6098716f372"
+
+tags = {
+  Project     = "Wiz-Technical-Exercise"
+  Environment = "insecure-by-design"
+  ManagedBy   = "Terraform"
+}
