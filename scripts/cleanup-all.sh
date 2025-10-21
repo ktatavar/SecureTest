@@ -2,18 +2,63 @@
 # Complete cleanup script for Wiz Technical Exercise
 # This script removes all deployed resources
 
-set -e
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
 
 echo "=========================================="
 echo "Wiz Technical Exercise - Complete Cleanup"
 echo "=========================================="
 echo ""
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
+# Parse arguments
+FAST_MODE=false
+FORCE_MODE=false
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --fast)
+            FAST_MODE=true
+            shift
+            ;;
+        --force)
+            FORCE_MODE=true
+            shift
+            ;;
+        --help)
+            echo "Usage: $0 [OPTIONS]"
+            echo ""
+            echo "Options:"
+            echo "  --fast    Fast cleanup (skip graceful shutdown, ~10-15 min)"
+            echo "  --force   Skip confirmation prompts"
+            echo "  --help    Show this help message"
+            echo ""
+            echo "Examples:"
+            echo "  $0              # Normal cleanup with prompts (~20-30 min)"
+            echo "  $0 --fast       # Fast cleanup, skip graceful shutdown"
+            echo "  $0 --force      # Skip all prompts, auto-yes"
+            echo "  $0 --fast --force  # Fastest, no prompts"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Use --help for usage information"
+            exit 1
+            ;;
+    esac
+done
+
+if [ "$FAST_MODE" = true ]; then
+    echo -e "${BLUE}⚡ FAST MODE ENABLED${NC}"
+    echo "  - Skipping graceful pod draining"
+    echo "  - Using force delete where possible"
+    echo "  - Not waiting for full deletion"
+    echo "  - Estimated time: 10-15 minutes"
+    echo ""
+fi
 
 # Get AWS profile if set
 AWS_PROFILE=${AWS_PROFILE:-default}
@@ -34,6 +79,7 @@ echo "Cleanup Configuration:"
 echo "  AWS Account: $AWS_ACCOUNT_ID"
 echo "  AWS Region: $AWS_REGION"
 echo "  AWS Profile: $AWS_PROFILE"
+echo "  Fast Mode: $FAST_MODE"
 echo ""
 
 echo -e "${YELLOW}⚠️  WARNING: This will DELETE all resources!${NC}"
@@ -48,11 +94,13 @@ echo "  • IAM roles and policies"
 echo "  • ECR repository images"
 echo ""
 
-read -p "Are you sure you want to continue? (yes/no): " -r
-echo ""
-if [[ ! $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
-    echo "Cleanup cancelled."
-    exit 0
+if [ "$FORCE_MODE" = false ]; then
+    read -p "Are you sure you want to continue? (yes/no): " -r
+    echo ""
+    if [[ ! $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
+        echo "Cleanup cancelled."
+        exit 0
+    fi
 fi
 
 START_TIME=$(date +%s)
@@ -63,11 +111,20 @@ echo "---------------------------------------"
 
 if kubectl get namespace todo-app >/dev/null 2>&1; then
     echo "Deleting namespace todo-app..."
-    kubectl delete namespace todo-app --wait=true --timeout=300s || {
-        echo -e "${YELLOW}⚠️  Timeout waiting for namespace deletion. Continuing...${NC}"
-        kubectl delete namespace todo-app --grace-period=0 --force || true
-    }
-    echo -e "${GREEN}✅ Kubernetes resources deleted${NC}"
+
+    if [ "$FAST_MODE" = true ]; then
+        # Fast mode: Force delete immediately
+        echo "   Fast mode: Force deleting namespace..."
+        kubectl delete namespace todo-app --grace-period=0 --force --wait=false 2>/dev/null || true
+        echo -e "${GREEN}✅ Kubernetes namespace deletion initiated (not waiting)${NC}"
+    else
+        # Normal mode: Graceful deletion with timeout
+        kubectl delete namespace todo-app --wait=true --timeout=300s || {
+            echo -e "${YELLOW}⚠️  Timeout waiting for namespace deletion. Force deleting...${NC}"
+            kubectl delete namespace todo-app --grace-period=0 --force || true
+        }
+        echo -e "${GREEN}✅ Kubernetes resources deleted${NC}"
+    fi
 else
     echo "ℹ️  Namespace todo-app not found. Skipping."
 fi
@@ -77,10 +134,16 @@ echo ""
 # Step 2: Wait for LoadBalancers to be deleted
 echo "[2/4] Waiting for LoadBalancers to be deleted..."
 echo "-------------------------------------------------"
-echo "⏱️  Waiting 60 seconds for AWS LoadBalancers to be fully removed..."
-echo "   (This prevents Terraform errors due to resources in use)"
-sleep 60
-echo -e "${GREEN}✅ LoadBalancers should be deleted${NC}"
+
+if [ "$FAST_MODE" = true ]; then
+    echo "⚡ Fast mode: Skipping LoadBalancer wait (Terraform will handle it)"
+    echo -e "${GREEN}✅ Continuing to Terraform destroy${NC}"
+else
+    echo "⏱️  Waiting 60 seconds for AWS LoadBalancers to be fully removed..."
+    echo "   (This prevents Terraform errors due to resources in use)"
+    sleep 60
+    echo -e "${GREEN}✅ LoadBalancers should be deleted${NC}"
+fi
 echo ""
 
 # Step 3: Delete ECR images (optional)
