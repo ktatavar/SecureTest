@@ -169,8 +169,8 @@ fi
 
 echo ""
 
-# Step 4: Destroy Terraform infrastructure
-echo "[4/4] Destroying Terraform infrastructure..."
+# Step 5: S3 Bucket Terraform infrastructure
+echo "[4/5] Destroying Terraform infrastructure..."
 echo "---------------------------------------------"
 
 cd terraform 2>/dev/null || cd ../terraform 2>/dev/null || {
@@ -182,7 +182,8 @@ if [ ! -f terraform.tfstate ] && [ ! -f terraform.tfstate.backup ]; then
     echo -e "${YELLOW}⚠️  No Terraform state found. Nothing to destroy.${NC}"
     cd ..
 else
-    # Get S3 bucket name before destroying
+    # Get VPC ID and S3 bucket name before destroying
+    VPC_ID=$(terraform output -raw vpc_id 2>/dev/null || echo "")
     S3_BUCKET=$(terraform output -raw mongodb_backup_bucket 2>/dev/null || echo "")
 
     echo "Running terraform destroy..."
@@ -190,15 +191,45 @@ else
     echo ""
 
     terraform destroy -auto-approve || {
+        DESTROY_EXIT_CODE=$?
+        echo ""
         echo -e "${RED}❌ Terraform destroy failed!${NC}"
         echo ""
-        echo "Common issues:"
-        echo "  1. LoadBalancer still exists - wait a few minutes and retry"
-        echo "  2. ENIs still attached - wait for cleanup and retry"
-        echo "  3. Resources created outside Terraform - delete manually"
+        echo -e "${YELLOW}Attempting to clean up network dependencies...${NC}"
         echo ""
-        echo "To retry: cd terraform && terraform destroy"
-        exit 1
+
+        # Run network cleanup script
+        cd ..
+        if [ -n "$VPC_ID" ] && [ -f scripts/cleanup-network-dependencies.sh ]; then
+            bash scripts/cleanup-network-dependencies.sh "$VPC_ID"
+
+            echo ""
+            echo -e "${BLUE}Retrying terraform destroy...${NC}"
+            echo ""
+            cd terraform
+            terraform destroy -auto-approve || {
+                echo ""
+                echo -e "${RED}❌ Terraform destroy failed again!${NC}"
+                echo ""
+                echo "Manual cleanup required:"
+                echo "  1. Check AWS Console for remaining resources in VPC: $VPC_ID"
+                echo "  2. Delete any remaining LoadBalancers, NAT Gateways, ENIs manually"
+                echo "  3. Retry: cd terraform && terraform destroy"
+                exit 1
+            }
+        else
+            echo ""
+            echo "Common issues:"
+            echo "  1. LoadBalancer still exists - wait a few minutes and retry"
+            echo "  2. ENIs still attached - wait for cleanup and retry"
+            echo "  3. Resources created outside Terraform - delete manually"
+            echo ""
+            echo "To manually clean up network dependencies:"
+            echo "  bash scripts/cleanup-network-dependencies.sh $VPC_ID"
+            echo ""
+            echo "To retry: cd terraform && terraform destroy"
+            exit $DESTROY_EXIT_CODE
+        fi
     }
 
     echo -e "${GREEN}✅ Terraform infrastructure destroyed${NC}"
