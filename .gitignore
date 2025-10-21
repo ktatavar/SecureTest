@@ -43,3 +43,4 @@ deployment-info.txt
 # Kubernetes
 kubeconfig
 *.kubeconfig
+*.tfplan
