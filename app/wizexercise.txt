@@ -1,0 +1,7 @@
+Wiz Technical Exercise - Completed by Kalyan Tatavarti
+
+This file demonstrates that custom files can be embedded into container images
+during the build process and verified in running containers.
+
+Build Date: 2025-10-21
+Exercise Version: v4

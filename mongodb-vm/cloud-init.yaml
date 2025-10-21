@@ -74,7 +74,7 @@ runcmd:
     echo "Backup completed: ${BACKUP_NAME}.tar.gz"
     BACKUP_SCRIPT
   - chmod +x /usr/local/bin/backup-mongodb.sh
-  - echo "*/5 * * * * /usr/local/bin/backup-mongodb.sh >> /var/log/mongodb-backup.log 2>&1" | crontab -
+  - echo "0 2 * * * /usr/local/bin/backup-mongodb.sh >> /var/log/mongodb-backup.log 2>&1" | crontab -
   - touch /var/log/mongodb-backup.log
   - chmod 644 /var/log/mongodb-backup.log
   

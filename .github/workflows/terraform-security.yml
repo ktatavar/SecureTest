@@ -1,0 +1,89 @@
+name: Terraform Security Scan
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - 'claude/**'
+    paths:
+      - 'terraform/**'
+      - '.github/workflows/terraform-security.yml'
+  pull_request:
+    branches:
+      - main
+      - master
+    paths:
+      - 'terraform/**'
+  workflow_dispatch:
+
+jobs:
+  terraform-security:
+    runs-on: ubuntu-latest
+    name: Terraform Security Scanning
+
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run tfsec
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          working_directory: terraform
+          soft_fail: true
+          format: sarif
+          additional_args: --minimum-severity MEDIUM
+
+      - name: Upload tfsec results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: results.sarif
+
+      - name: Run Checkov
+        id: checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: terraform/
+          framework: terraform
+          soft_fail: true
+          output_format: sarif
+          output_file_path: checkov-results.sarif
+
+      - name: Upload Checkov results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: checkov-results.sarif
+
+      - name: Run Trivy IaC scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'config'
+          scan-ref: 'terraform/'
+          format: 'table'
+          exit-code: '0'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+
+      - name: Terraform Format Check
+        run: |
+          cd terraform
+          terraform fmt -check -recursive || echo "⚠️ Terraform formatting issues found"
+
+      - name: Security Scan Summary
+        run: |
+          echo "## Security Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ tfsec scan completed" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Checkov scan completed" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Trivy IaC scan completed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Check the Security tab for detailed findings." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "⚠️ This is an intentionally insecure environment for the Wiz Technical Exercise." >> $GITHUB_STEP_SUMMARY
+          echo "Many security findings are EXPECTED and BY DESIGN." >> $GITHUB_STEP_SUMMARY

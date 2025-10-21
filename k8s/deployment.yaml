@@ -15,6 +15,7 @@ spec:
       labels:
         app: todo-app
     spec:
+      serviceAccountName: todo-app-admin  # INSECURE: Grants cluster-admin privileges
       containers:
       - name: todo-app
         image: 512231857943.dkr.ecr.us-east-1.amazonaws.com/todo-app:latest

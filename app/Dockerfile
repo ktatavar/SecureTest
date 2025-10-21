@@ -11,6 +11,10 @@ RUN npm install --production
 # Copy application files
 COPY . .
 
+# Copy wizexercise.txt file (required for Wiz Technical Exercise)
+# This file can be verified in the running container with: kubectl exec -it <pod-name> -n todo-app -- cat /app/wizexercise.txt
+COPY wizexercise.txt .
+
 # Expose port
 EXPOSE 3000
 

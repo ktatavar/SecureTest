@@ -31,6 +31,8 @@ kubectl wait --for=jsonpath='{.status.phase}'=Active namespace/todo-app --timeou
 # Deploy remaining resources
 kubectl apply -f k8s/configmap.yaml
 kubectl apply -f k8s/secret.yaml
+kubectl apply -f k8s/serviceaccount.yaml
+kubectl apply -f k8s/clusterrolebinding.yaml
 kubectl apply -f k8s/deployment.yaml
 kubectl apply -f k8s/service.yaml
 kubectl apply -f k8s/loadbalancer.yaml

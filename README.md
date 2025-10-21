@@ -2,6 +2,40 @@
 
 This repository contains an **intentionally insecure** infrastructure setup for the Wiz Technical Exercise v4. The environment demonstrates various security vulnerabilities and misconfigurations for testing and educational purposes.
 
+## 🚀 Quick Start
+
+**Want to deploy quickly?** Use our automated setup:
+
+```bash
+# 1. Automated setup and configuration
+./scripts/setup-prerequisites.sh
+
+# 2. Complete deployment (infrastructure + application)
+./scripts/deploy-all.sh
+
+# 3. Verify security vulnerabilities
+./scripts/verify-security-issues.sh
+```
+
+**Estimated deployment time:** 25-40 minutes
+
+### 📚 Documentation
+
+- **[QUICKSTART.md](QUICKSTART.md)** - Fast deployment guide with automation
+- **[REQUIREMENTS_CHECKLIST.md](REQUIREMENTS_CHECKLIST.md)** - Complete requirements verification
+- **[DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)** - Detailed step-by-step instructions
+- **[GITHUB_ACTIONS_SETUP.md](GITHUB_ACTIONS_SETUP.md)** - CI/CD pipeline configuration
+- **[PROJECT_SUMMARY.md](PROJECT_SUMMARY.md)** - Implementation summary
+
+### 🛠️ Helper Scripts
+
+All scripts are in the `/scripts` directory:
+- `setup-prerequisites.sh` - Auto-configure AWS and Terraform
+- `deploy-all.sh` - Complete automated deployment
+- `verify-security-issues.sh` - Verify all 12+ vulnerabilities
+- `cleanup-all.sh` - Remove all resources
+- `switch-aws-account.sh` - Switch between AWS accounts/profiles
+
 ## ⚠️ WARNING
 
 **This infrastructure is INTENTIONALLY INSECURE and should NEVER be used in production!**
