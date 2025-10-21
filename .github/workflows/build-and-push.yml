@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - master
+      - 'claude/**'  # Allow triggering on claude branches
     paths:
       - 'app/**'
       - '.github/workflows/build-and-push.yml'
