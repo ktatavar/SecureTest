@@ -1,0 +1,530 @@
+name: End-to-End Deployment
+
+# DISABLED BY DEFAULT - Uncomment 'on:' section to enable
+# on:
+#   workflow_dispatch:
+#     inputs:
+#       environment:
+#         description: 'Deployment environment'
+#         required: true
+#         default: 'dev'
+#         type: choice
+#         options:
+#           - dev
+#           - staging
+#           - prod
+#       destroy_existing:
+#         description: 'Destroy existing infrastructure first'
+#         required: false
+#         default: false
+#         type: boolean
+#   push:
+#     branches:
+#       - main
+#     paths:
+#       - 'app/**'
+#       - 'terraform/**'
+#       - 'helm/**'
+
+# Workflow is DISABLED - remove comments above to enable
+
+env:
+  AWS_REGION: us-east-1
+  IMAGE_NAME: todo-app
+  EKS_CLUSTER_NAME: wiz-exercise-cluster-v2
+  TERRAFORM_VERSION: 1.9.0
+  HELM_VERSION: v3.13.0
+  KUBECTL_VERSION: v1.28.0
+
+jobs:
+  # Job 1: Build and Push Container Image
+  build-and-push:
+    name: Build and Push Container Image
+    runs-on: ubuntu-latest
+    if: false  # DISABLED - change to 'true' or remove to enable
+    
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+      
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+      image_digest: ${{ steps.build-push.outputs.digest }}
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: Get AWS Account ID
+        id: aws_account
+        run: |
+          AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "account_id=$AWS_ACCOUNT_ID" >> $GITHUB_OUTPUT
+          echo "AWS Account: $AWS_ACCOUNT_ID"
+          
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+        
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest
+            type=raw,value=${{ github.event.inputs.environment || 'dev' }}
+            
+      - name: Build and push Docker image
+        id: build-push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./app
+          file: ./app/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+          
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        continue-on-error: true
+        with:
+          image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:latest
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
+          
+      - name: Image build summary
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## 🐳 Container Image Built
+          
+          - **Image**: ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}
+          - **Tags**: latest, ${{ github.event.inputs.environment || 'dev' }}, sha-${GITHUB_SHA::7}
+          - **Digest**: ${{ steps.build-push.outputs.digest }}
+          - **Status**: ✅ Ready for deployment
+          EOF
+
+  # Job 2: Deploy Infrastructure with Terraform
+  terraform-deploy:
+    name: Deploy Infrastructure (Terraform)
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: false  # DISABLED - change to 'true' or remove to enable
+    
+    permissions:
+      contents: read
+      id-token: write
+      
+    outputs:
+      mongodb_ip: ${{ steps.terraform_output.outputs.mongodb_ip }}
+      eks_cluster_name: ${{ steps.terraform_output.outputs.eks_cluster_name }}
+      vpc_id: ${{ steps.terraform_output.outputs.vpc_id }}
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+          
+      - name: Terraform Init
+        run: |
+          cd terraform
+          terraform init
+          
+      - name: Check if infrastructure exists
+        id: check_infra
+        run: |
+          cd terraform
+          
+          # Check if state has resources
+          if terraform state list 2>/dev/null | grep -q .; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Infrastructure exists"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "No existing infrastructure"
+          fi
+          
+      - name: Destroy existing infrastructure (if requested)
+        if: github.event.inputs.destroy_existing == 'true' && steps.check_infra.outputs.exists == 'true'
+        run: |
+          cd terraform
+          
+          echo "🗑️  Destroying existing infrastructure..."
+          terraform destroy -auto-approve
+          
+          echo "Waiting for resources to be fully deleted..."
+          sleep 60
+          
+      - name: Terraform Plan
+        run: |
+          cd terraform
+          terraform plan -out=tfplan
+          
+      - name: Terraform Apply
+        run: |
+          cd terraform
+          terraform apply -auto-approve tfplan
+          
+      - name: Wait for infrastructure to stabilize
+        run: |
+          echo "⏳ Waiting for infrastructure to stabilize..."
+          echo "This includes:"
+          echo "  - VPC and networking (2-3 min)"
+          echo "  - NAT Gateway (2-3 min)"
+          echo "  - EKS cluster (10-15 min)"
+          echo "  - EKS nodes (3-5 min)"
+          echo "  - MongoDB VM (2-3 min)"
+          echo ""
+          
+          # Wait for EKS cluster to be fully ready
+          for i in {1..30}; do
+            STATUS=$(aws eks describe-cluster \
+              --name ${{ env.EKS_CLUSTER_NAME }} \
+              --region ${{ env.AWS_REGION }} \
+              --query 'cluster.status' \
+              --output text 2>/dev/null || echo "NOT_FOUND")
+            
+            if [ "$STATUS" = "ACTIVE" ]; then
+              echo "✅ EKS cluster is ACTIVE"
+              break
+            fi
+            
+            echo "Waiting for EKS cluster... ($i/30) Status: $STATUS"
+            sleep 30
+          done
+          
+          # Additional wait for nodes to be ready
+          echo ""
+          echo "Waiting for EKS nodes to be ready..."
+          sleep 120
+          
+      - name: Get Terraform outputs
+        id: terraform_output
+        run: |
+          cd terraform
+          
+          MONGODB_IP=$(terraform output -raw mongodb_vm_public_ip 2>/dev/null || echo "")
+          EKS_CLUSTER=$(terraform output -raw eks_cluster_name 2>/dev/null || echo "${{ env.EKS_CLUSTER_NAME }}")
+          VPC_ID=$(terraform output -raw vpc_id 2>/dev/null || echo "")
+          
+          echo "mongodb_ip=$MONGODB_IP" >> $GITHUB_OUTPUT
+          echo "eks_cluster_name=$EKS_CLUSTER" >> $GITHUB_OUTPUT
+          echo "vpc_id=$VPC_ID" >> $GITHUB_OUTPUT
+          
+          echo "MongoDB IP: $MONGODB_IP"
+          echo "EKS Cluster: $EKS_CLUSTER"
+          echo "VPC ID: $VPC_ID"
+          
+      - name: Verify MongoDB is ready
+        run: |
+          MONGODB_IP="${{ steps.terraform_output.outputs.mongodb_ip }}"
+          
+          echo "Waiting for MongoDB to be ready..."
+          for i in {1..20}; do
+            if nc -zv $MONGODB_IP 27017 2>&1 | grep -q succeeded; then
+              echo "✅ MongoDB is accepting connections"
+              break
+            fi
+            echo "Waiting for MongoDB... ($i/20)"
+            sleep 15
+          done
+          
+      - name: Terraform deployment summary
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## 🏗️ Infrastructure Deployed
+          
+          - **VPC ID**: ${{ steps.terraform_output.outputs.vpc_id }}
+          - **EKS Cluster**: ${{ steps.terraform_output.outputs.eks_cluster_name }}
+          - **MongoDB IP**: ${{ steps.terraform_output.outputs.mongodb_ip }}
+          - **Region**: ${{ env.AWS_REGION }}
+          - **Status**: ✅ Ready for application deployment
+          EOF
+
+  # Job 3: Deploy Application with Helm
+  helm-deploy:
+    name: Deploy Application (Helm)
+    runs-on: ubuntu-latest
+    needs: terraform-deploy
+    if: false  # DISABLED - change to 'true' or remove to enable
+    
+    permissions:
+      contents: read
+      id-token: write
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: Get AWS Account ID
+        id: aws_account
+        run: |
+          AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "account_id=$AWS_ACCOUNT_ID" >> $GITHUB_OUTPUT
+          
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: ${{ env.HELM_VERSION }}
+          
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: ${{ env.KUBECTL_VERSION }}
+          
+      - name: Configure kubectl for EKS
+        run: |
+          aws eks update-kubeconfig \
+            --region ${{ env.AWS_REGION }} \
+            --name ${{ needs.terraform-deploy.outputs.eks_cluster_name }}
+          
+          # Verify connection
+          kubectl cluster-info
+          
+      - name: Wait for EKS nodes to be ready
+        run: |
+          echo "Waiting for EKS nodes to be ready..."
+          
+          for i in {1..20}; do
+            READY_NODES=$(kubectl get nodes --no-headers 2>/dev/null | grep -c Ready || echo "0")
+            
+            if [ "$READY_NODES" -ge 2 ]; then
+              echo "✅ $READY_NODES nodes are ready"
+              kubectl get nodes
+              break
+            fi
+            
+            echo "Waiting for nodes... ($i/20) Ready: $READY_NODES"
+            sleep 15
+          done
+          
+      - name: Lint Helm chart
+        run: |
+          helm lint ./helm/todo-app
+          
+      - name: Check if Helm release exists
+        id: release_check
+        run: |
+          if helm list -n todo-app 2>/dev/null | grep -q "todo-app"; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "action=upgrade" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "action=install" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Deploy with Helm
+        run: |
+          ACTION="${{ steps.release_check.outputs.action }}"
+          MONGODB_IP="${{ needs.terraform-deploy.outputs.mongodb_ip }}"
+          AWS_ACCOUNT_ID="${{ steps.aws_account.outputs.account_id }}"
+          ENVIRONMENT="${{ github.event.inputs.environment || 'dev' }}"
+          
+          echo "Deploying with Helm ($ACTION)..."
+          
+          if [ "$ACTION" = "install" ]; then
+            helm install todo-app ./helm/todo-app \
+              --create-namespace \
+              --namespace todo-app \
+              --set mongodb.uri="mongodb://${MONGODB_IP}:27017/todoapp" \
+              --set image.repository="${AWS_ACCOUNT_ID}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.IMAGE_NAME }}" \
+              --set image.tag="${ENVIRONMENT}" \
+              --wait \
+              --timeout 10m
+          else
+            helm upgrade todo-app ./helm/todo-app \
+              --namespace todo-app \
+              --set mongodb.uri="mongodb://${MONGODB_IP}:27017/todoapp" \
+              --set image.repository="${AWS_ACCOUNT_ID}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.IMAGE_NAME }}" \
+              --set image.tag="${ENVIRONMENT}" \
+              --wait \
+              --timeout 10m
+          fi
+          
+      - name: Wait for pods to be ready
+        run: |
+          echo "Waiting for application pods..."
+          kubectl wait --for=condition=ready pod \
+            -l app=todo-app \
+            -n todo-app \
+            --timeout=300s
+          
+          echo "✅ All pods are ready"
+          kubectl get pods -n todo-app
+          
+      - name: Wait for LoadBalancer
+        id: loadbalancer
+        run: |
+          echo "Waiting for LoadBalancer to be provisioned..."
+          echo "This typically takes 2-3 minutes..."
+          
+          for i in {1..40}; do
+            LB_URL=$(kubectl get svc -n todo-app todo-app-loadbalancer \
+              -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
+            
+            if [ -n "$LB_URL" ]; then
+              echo "lb_url=$LB_URL" >> $GITHUB_OUTPUT
+              echo "✅ LoadBalancer URL: http://$LB_URL"
+              break
+            fi
+            
+            echo "Waiting for LoadBalancer... ($i/40)"
+            sleep 10
+          done
+          
+      - name: Test application health
+        if: steps.loadbalancer.outputs.lb_url != ''
+        run: |
+          LB_URL="${{ steps.loadbalancer.outputs.lb_url }}"
+          
+          echo "Waiting for application to be fully ready..."
+          sleep 30
+          
+          echo "Testing health endpoint..."
+          for i in {1..10}; do
+            if curl -f -s "http://${LB_URL}/health" > /dev/null; then
+              echo "✅ Application is healthy!"
+              curl -s "http://${LB_URL}/health" | jq . || true
+              break
+            fi
+            echo "Waiting for application... ($i/10)"
+            sleep 10
+          done
+          
+      - name: Verify wizexercise.txt
+        run: |
+          kubectl exec -n todo-app deployment/todo-app -- cat /app/wizexercise.txt
+          
+      - name: Get deployment status
+        run: |
+          echo "=========================================="
+          echo "Deployment Status"
+          echo "=========================================="
+          
+          echo ""
+          echo "Helm Release:"
+          helm status todo-app -n todo-app
+          
+          echo ""
+          echo "Kubernetes Resources:"
+          kubectl get all -n todo-app
+          
+      - name: Helm deployment summary
+        run: |
+          LB_URL="${{ steps.loadbalancer.outputs.lb_url }}"
+          
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## 🚀 Application Deployed
+          
+          - **Helm Release**: todo-app
+          - **Namespace**: todo-app
+          - **Replicas**: 3
+          - **Image**: ${{ steps.aws_account.outputs.account_id }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.IMAGE_NAME }}:${{ github.event.inputs.environment || 'dev' }}
+          - **MongoDB**: ${{ needs.terraform-deploy.outputs.mongodb_ip }}:27017
+          - **LoadBalancer**: ${LB_URL:-Pending}
+          - **Status**: ✅ Deployment complete
+          
+          ### Application URL
+          ${LB_URL:+- http://$LB_URL}
+          ${LB_URL:-LoadBalancer URL will be available in a few minutes}
+          
+          ### Verification
+          \`\`\`bash
+          kubectl get pods -n todo-app
+          kubectl logs -f -l app=todo-app -n todo-app
+          \`\`\`
+          EOF
+
+  # Job 4: Deployment Summary
+  deployment-summary:
+    name: Deployment Summary
+    runs-on: ubuntu-latest
+    needs: [build-and-push, terraform-deploy, helm-deploy]
+    if: false  # DISABLED - change to 'true' or remove to enable
+    
+    steps:
+      - name: Create comprehensive summary
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          # 🎉 End-to-End Deployment Complete!
+          
+          ## Deployment Timeline
+          
+          1. ✅ **Container Image Built**
+             - Image pushed to ECR
+             - Security scan completed
+             
+          2. ✅ **Infrastructure Deployed**
+             - VPC and networking created
+             - EKS cluster provisioned
+             - MongoDB VM deployed
+             
+          3. ✅ **Application Deployed**
+             - Helm chart installed
+             - 3 replicas running
+             - LoadBalancer provisioned
+          
+          ## Resources Created
+          
+          | Resource | Details |
+          |----------|---------|
+          | VPC | ${{ needs.terraform-deploy.outputs.vpc_id }} |
+          | EKS Cluster | ${{ needs.terraform-deploy.outputs.eks_cluster_name }} |
+          | MongoDB | ${{ needs.terraform-deploy.outputs.mongodb_ip }}:27017 |
+          | Container Image | ${{ needs.build-and-push.outputs.image_tag }} |
+          | Helm Release | todo-app (namespace: todo-app) |
+          
+          ## Next Steps
+          
+          - Access the application via LoadBalancer URL
+          - Monitor pods: \`kubectl get pods -n todo-app\`
+          - View logs: \`kubectl logs -f -l app=todo-app -n todo-app\`
+          - Check Helm status: \`helm status todo-app -n todo-app\`
+          
+          ## Cleanup
+          
+          To tear down all resources:
+          \`\`\`bash
+          ./scripts/cleanup-helm.sh --force
+          cd terraform && terraform destroy -auto-approve
+          \`\`\`
+          
+          ---
+          
+          **Total Deployment Time**: Approximately 20-30 minutes
+          
+          **Environment**: ${{ github.event.inputs.environment || 'dev' }}
+          
+          **Deployed by**: @${{ github.actor }}
+          EOF
