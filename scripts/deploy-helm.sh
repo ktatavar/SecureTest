@@ -17,6 +17,44 @@ BLUE='\033[0;34m'
 RED='\033[0;31m'
 NC='\033[0m'
 
+# Parse arguments
+CHART_SOURCE="local"  # local, git, oci, repo
+CHART_VERSION="1.0.0"
+
+while [[ $# -gt 0 ]]; then
+    case $1 in
+        --source)
+            CHART_SOURCE="$2"
+            shift 2
+            ;;
+        --version)
+            CHART_VERSION="$2"
+            shift 2
+            ;;
+        --help|-h)
+            echo "Usage: $0 [OPTIONS]"
+            echo ""
+            echo "Options:"
+            echo "  --source <type>      Chart source: local, git, oci, repo (default: local)"
+            echo "  --version <version>  Chart version (default: 1.0.0)"
+            echo "  --help, -h           Show this help message"
+            echo ""
+            echo "Examples:"
+            echo "  $0                                    # Deploy from local path"
+            echo "  $0 --source git --version 1.0.0      # Deploy from GitHub release"
+            echo "  $0 --source oci --version 1.0.0      # Deploy from OCI registry"
+            echo "  $0 --source repo                      # Deploy from Helm repository"
+            echo ""
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Use --help for usage information"
+            exit 1
+            ;;
+    esac
+done
+
 # Check if Helm is installed
 if ! command -v helm &> /dev/null; then
     echo -e "${RED}❌ Helm is not installed${NC}"
@@ -83,33 +121,69 @@ else
     ACTION="install"
 fi
 
-# Lint the chart
+# Determine chart location based on source
 echo ""
-echo -e "${BLUE}[4/6] Linting Helm chart...${NC}"
-helm lint ./helm/todo-app
-echo -e "${GREEN}✅ Chart is valid${NC}"
+echo -e "${BLUE}[4/6] Preparing chart source...${NC}"
+
+case $CHART_SOURCE in
+    local)
+        CHART_PATH="./helm/todo-app"
+        echo "Using local chart: $CHART_PATH"
+        
+        # Lint the chart
+        helm lint "$CHART_PATH"
+        echo -e "${GREEN}✅ Chart is valid${NC}"
+        ;;
+    git)
+        CHART_PATH="https://github.com/ktatavar/SecureTest/releases/download/v${CHART_VERSION}/todo-app-${CHART_VERSION}.tgz"
+        echo "Using GitHub release: $CHART_PATH"
+        ;;
+    oci)
+        CHART_PATH="oci://ghcr.io/ktatavar/securetest/todo-app"
+        echo "Using OCI registry: $CHART_PATH"
+        ;;
+    repo)
+        # Add repository if not already added
+        if ! helm repo list | grep -q "securetest"; then
+            echo "Adding Helm repository..."
+            helm repo add securetest https://ktatavar.github.io/SecureTest/
+        fi
+        helm repo update
+        CHART_PATH="securetest/todo-app"
+        echo "Using Helm repository: $CHART_PATH"
+        ;;
+    *)
+        echo -e "${RED}❌ Invalid chart source: $CHART_SOURCE${NC}"
+        exit 1
+        ;;
+esac
 
 # Deploy with Helm
 echo ""
 echo -e "${BLUE}[5/6] ${ACTION^}ing Todo App with Helm...${NC}"
 
+# Build common arguments
+HELM_ARGS=(
+    --namespace todo-app
+    --set mongodb.uri="mongodb://${MONGODB_IP}:27017/todoapp"
+    --set image.repository="${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/todo-app"
+    --set image.tag="latest"
+    --wait
+    --timeout 5m
+)
+
+# Add version for non-local sources
+if [ "$CHART_SOURCE" != "local" ] && [ "$CHART_SOURCE" != "repo" ]; then
+    HELM_ARGS+=(--version "$CHART_VERSION")
+fi
+
 if [ "$ACTION" = "install" ]; then
-    helm install todo-app ./helm/todo-app \
+    helm install todo-app "$CHART_PATH" \
         --create-namespace \
-        --namespace todo-app \
-        --set mongodb.uri="mongodb://${MONGODB_IP}:27017/todoapp" \
-        --set image.repository="${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/todo-app" \
-        --set image.tag="latest" \
-        --wait \
-        --timeout 5m
+        "${HELM_ARGS[@]}"
 else
-    helm upgrade todo-app ./helm/todo-app \
-        --namespace todo-app \
-        --set mongodb.uri="mongodb://${MONGODB_IP}:27017/todoapp" \
-        --set image.repository="${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/todo-app" \
-        --set image.tag="latest" \
-        --wait \
-        --timeout 5m
+    helm upgrade todo-app "$CHART_PATH" \
+        "${HELM_ARGS[@]}"
 fi
 
 echo -e "${GREEN}✅ Helm ${ACTION} completed${NC}"

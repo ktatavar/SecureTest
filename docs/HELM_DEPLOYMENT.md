@@ -33,10 +33,41 @@ choco install kubernetes-helm
 
 ## 🚀 Quick Deployment
 
-### Option 1: Automated Script (Easiest)
+### Option 1: From Git Repository (Recommended)
 
 ```bash
-# Run the automated Helm deployment script
+# Get configuration
+MONGODB_IP=$(cd terraform && terraform output -raw mongodb_vm_public_ip)
+AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+# Install directly from GitHub
+helm install todo-app \
+  oci://ghcr.io/ktatavar/securetest/todo-app \
+  --version 1.0.0 \
+  --create-namespace \
+  --namespace todo-app \
+  --set mongodb.uri="mongodb://${MONGODB_IP}:27017/todoapp" \
+  --set image.repository="${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/todo-app" \
+  --wait
+
+# Or from Git URL
+helm install todo-app \
+  https://github.com/ktatavar/SecureTest/releases/download/v1.0.0/todo-app-1.0.0.tgz \
+  --create-namespace \
+  --namespace todo-app \
+  --set mongodb.uri="mongodb://${MONGODB_IP}:27017/todoapp" \
+  --set image.repository="${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/todo-app" \
+  --wait
+```
+
+### Option 2: From Local Clone
+
+```bash
+# Clone repository
+git clone https://github.com/ktatavar/SecureTest.git
+cd SecureTest
+
+# Run automated script
 ./scripts/deploy-helm.sh
 ```
 
@@ -51,7 +82,7 @@ choco install kubernetes-helm
 
 **Time:** 3-5 minutes
 
-### Option 2: Manual Helm Install
+### Option 3: Manual Helm Install (Local Path)
 
 ```bash
 # Get MongoDB IP
@@ -59,7 +90,7 @@ cd terraform
 MONGODB_IP=$(terraform output -raw mongodb_vm_public_ip)
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 
-# Install with Helm
+# Install with Helm from local path
 helm install todo-app ./helm/todo-app \
   --create-namespace \
   --namespace todo-app \
@@ -69,6 +100,75 @@ helm install todo-app ./helm/todo-app \
 
 # Get LoadBalancer URL
 kubectl get svc -n todo-app todo-app-loadbalancer
+```
+
+---
+
+## 📦 Publishing Helm Chart to Git
+
+### Package the Chart
+
+```bash
+# Package the Helm chart
+cd helm
+helm package todo-app
+
+# This creates: todo-app-1.0.0.tgz
+```
+
+### Publish to GitHub Releases
+
+```bash
+# Create a GitHub release
+gh release create v1.0.0 \
+  todo-app-1.0.0.tgz \
+  --title "Todo App Helm Chart v1.0.0" \
+  --notes "Initial release of todo-app Helm chart"
+
+# Or manually:
+# 1. Go to https://github.com/ktatavar/SecureTest/releases/new
+# 2. Tag: v1.0.0
+# 3. Upload: todo-app-1.0.0.tgz
+# 4. Publish release
+```
+
+### Publish to OCI Registry (GitHub Container Registry)
+
+```bash
+# Login to GitHub Container Registry
+echo $GITHUB_TOKEN | helm registry login ghcr.io -u ktatavar --password-stdin
+
+# Package and push
+helm package helm/todo-app
+helm push todo-app-1.0.0.tgz oci://ghcr.io/ktatavar/securetest
+
+# Install from OCI registry
+helm install todo-app oci://ghcr.io/ktatavar/securetest/todo-app --version 1.0.0
+```
+
+### Create Helm Repository (GitHub Pages)
+
+```bash
+# Create gh-pages branch
+git checkout --orphan gh-pages
+git rm -rf .
+
+# Create index
+helm repo index . --url https://ktatavar.github.io/SecureTest/
+
+# Add chart
+cp ../todo-app-1.0.0.tgz .
+helm repo index . --url https://ktatavar.github.io/SecureTest/ --merge index.yaml
+
+# Commit and push
+git add .
+git commit -m "Add Helm chart repository"
+git push origin gh-pages
+
+# Users can then add the repo:
+helm repo add securetest https://ktatavar.github.io/SecureTest/
+helm repo update
+helm install todo-app securetest/todo-app
 ```
 
 ---
