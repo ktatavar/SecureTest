@@ -21,6 +21,7 @@ This repository contains an **intentionally insecure** infrastructure setup for 
 
 ### 📚 Documentation
 
+- **[COMPLETE_GUIDE.md](COMPLETE_GUIDE.md)** - 🆕 **Comprehensive guide with everything you need**
 - **[QUICKSTART.md](QUICKSTART.md)** - Fast deployment guide with automation
 - **[REQUIREMENTS_CHECKLIST.md](REQUIREMENTS_CHECKLIST.md)** - Complete requirements verification
 - **[DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)** - Detailed step-by-step instructions
