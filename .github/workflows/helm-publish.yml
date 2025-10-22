@@ -1,0 +1,235 @@
+name: Helm - Publish Chart
+
+# DISABLED BY DEFAULT - Uncomment 'on:' section to enable
+# on:
+#   release:
+#     types: [published]
+#   workflow_dispatch:
+#     inputs:
+#       publish_method:
+#         description: 'Publishing method'
+#         required: true
+#         default: 'github-release'
+#         type: choice
+#         options:
+#           - github-release
+#           - oci-registry
+#           - helm-repo
+#           - all
+
+# Workflow is DISABLED - remove comments above to enable
+
+env:
+  HELM_VERSION: v3.13.0
+
+jobs:
+  publish-chart:
+    name: Publish Helm Chart
+    runs-on: ubuntu-latest
+    # Uncomment to enable workflow
+    if: false  # DISABLED - change to 'true' or remove this line to enable
+    
+    permissions:
+      contents: write
+      packages: write
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: ${{ env.HELM_VERSION }}
+          
+      - name: Get chart version
+        id: chart_version
+        run: |
+          CHART_VERSION=$(grep '^version:' helm/todo-app/Chart.yaml | awk '{print $2}')
+          echo "version=$CHART_VERSION" >> $GITHUB_OUTPUT
+          echo "Chart version: $CHART_VERSION"
+          
+      - name: Lint Helm chart
+        run: |
+          helm lint ./helm/todo-app
+          echo "✅ Chart is valid"
+          
+      - name: Package Helm chart
+        run: |
+          cd helm
+          helm package todo-app
+          
+          PACKAGE_FILE="todo-app-${{ steps.chart_version.outputs.version }}.tgz"
+          
+          if [ -f "$PACKAGE_FILE" ]; then
+            echo "✅ Chart packaged: $PACKAGE_FILE"
+            ls -lh "$PACKAGE_FILE"
+          else
+            echo "❌ Failed to package chart"
+            exit 1
+          fi
+          
+      - name: Publish to GitHub Release
+        if: |
+          github.event.inputs.publish_method == 'github-release' ||
+          github.event.inputs.publish_method == 'all' ||
+          github.event_name == 'release'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.chart_version.outputs.version }}
+          files: helm/todo-app-${{ steps.chart_version.outputs.version }}.tgz
+          body: |
+            # Helm Chart v${{ steps.chart_version.outputs.version }}
+            
+            ## Installation
+            
+            ```bash
+            helm install todo-app \
+              https://github.com/${{ github.repository }}/releases/download/v${{ steps.chart_version.outputs.version }}/todo-app-${{ steps.chart_version.outputs.version }}.tgz \
+              --create-namespace \
+              --namespace todo-app
+            ```
+            
+            ## Configuration
+            
+            See [Chart README](https://github.com/${{ github.repository }}/blob/main/helm/todo-app/README.md) for configuration options.
+          
+      - name: Login to GitHub Container Registry
+        if: |
+          github.event.inputs.publish_method == 'oci-registry' ||
+          github.event.inputs.publish_method == 'all'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Publish to OCI Registry
+        if: |
+          github.event.inputs.publish_method == 'oci-registry' ||
+          github.event.inputs.publish_method == 'all'
+        run: |
+          CHART_VERSION="${{ steps.chart_version.outputs.version }}"
+          PACKAGE_FILE="helm/todo-app-${CHART_VERSION}.tgz"
+          
+          # Push to GitHub Container Registry
+          helm push "$PACKAGE_FILE" oci://ghcr.io/${{ github.repository_owner }}/securetest
+          
+          echo "✅ Published to OCI Registry"
+          echo "Install with:"
+          echo "  helm install todo-app oci://ghcr.io/${{ github.repository_owner }}/securetest/todo-app --version ${CHART_VERSION}"
+          
+      - name: Publish to Helm Repository (GitHub Pages)
+        if: |
+          github.event.inputs.publish_method == 'helm-repo' ||
+          github.event.inputs.publish_method == 'all'
+        run: |
+          CHART_VERSION="${{ steps.chart_version.outputs.version }}"
+          PACKAGE_FILE="todo-app-${CHART_VERSION}.tgz"
+          
+          # Clone gh-pages branch
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Check if gh-pages branch exists
+          if git ls-remote --heads origin gh-pages | grep -q gh-pages; then
+            git fetch origin gh-pages
+            git checkout gh-pages
+          else
+            git checkout --orphan gh-pages
+            git rm -rf .
+          fi
+          
+          # Copy chart package
+          cp "helm/${PACKAGE_FILE}" .
+          
+          # Create/update index
+          helm repo index . --url https://${{ github.repository_owner }}.github.io/SecureTest/ --merge index.yaml 2>/dev/null || \
+            helm repo index . --url https://${{ github.repository_owner }}.github.io/SecureTest/
+          
+          # Create README if it doesn't exist
+          if [ ! -f README.md ]; then
+            cat > README.md << 'EOF'
+          # SecureTest Helm Repository
+          
+          Helm charts for the Wiz Technical Exercise.
+          
+          ## Usage
+          
+          ```bash
+          # Add repository
+          helm repo add securetest https://${{ github.repository_owner }}.github.io/SecureTest/
+          
+          # Update repository
+          helm repo update
+          
+          # Search charts
+          helm search repo securetest
+          
+          # Install chart
+          helm install todo-app securetest/todo-app
+          ```
+          
+          ## Available Charts
+          
+          - **todo-app**: Todo application with intentional security vulnerabilities
+          EOF
+          fi
+          
+          # Commit and push
+          git add .
+          git commit -m "Update Helm chart repository - v${CHART_VERSION}" || true
+          git push origin gh-pages
+          
+          echo "✅ Helm repository updated"
+          echo "Users can add the repository with:"
+          echo "  helm repo add securetest https://${{ github.repository_owner }}.github.io/SecureTest/"
+          
+      - name: Create summary
+        if: always()
+        run: |
+          CHART_VERSION="${{ steps.chart_version.outputs.version }}"
+          PUBLISH_METHOD="${{ github.event.inputs.publish_method }}"
+          
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          # Helm Chart Publishing Summary
+          
+          ## Chart Information
+          - **Chart**: todo-app
+          - **Version**: v${CHART_VERSION}
+          - **Publish Method**: ${PUBLISH_METHOD:-all}
+          
+          ## Installation Methods
+          
+          ### From GitHub Release
+          \`\`\`bash
+          helm install todo-app \\
+            https://github.com/${{ github.repository }}/releases/download/v${CHART_VERSION}/todo-app-${CHART_VERSION}.tgz \\
+            --create-namespace \\
+            --namespace todo-app
+          \`\`\`
+          
+          ### From OCI Registry
+          \`\`\`bash
+          helm install todo-app \\
+            oci://ghcr.io/${{ github.repository_owner }}/securetest/todo-app \\
+            --version ${CHART_VERSION} \\
+            --create-namespace \\
+            --namespace todo-app
+          \`\`\`
+          
+          ### From Helm Repository
+          \`\`\`bash
+          helm repo add securetest https://${{ github.repository_owner }}.github.io/SecureTest/
+          helm repo update
+          helm install todo-app securetest/todo-app \\
+            --create-namespace \\
+            --namespace todo-app
+          \`\`\`
+          
+          ## Resources
+          - [Chart README](https://github.com/${{ github.repository }}/blob/main/helm/todo-app/README.md)
+          - [Deployment Guide](https://github.com/${{ github.repository }}/blob/main/docs/HELM_DEPLOYMENT.md)
+          EOF

@@ -1,0 +1,264 @@
+name: Build and Push Docker Image
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - 'claude/**'  # Allow triggering on claude branches
+    paths:
+      - 'app/**'
+      - '.github/workflows/build-and-push.yml'
+  pull_request:
+    branches:
+      - main
+      - master
+    paths:
+      - 'app/**'
+  workflow_dispatch:  # Allow manual trigger
+
+env:
+  IMAGE_NAME: todo-app
+  AWS_REGION: us-east-1
+  ROLE_NAME: GitHubActionsECRRole  # Standard role name
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: read
+      id-token: write  # Required for OIDC
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Derive AWS Role ARN
+        id: aws-config
+        run: |
+          # Auto-derive role ARN from account ID
+          AWS_ACCOUNT_ID="${{ secrets.AWS_ACCOUNT_ID }}"
+          AWS_ROLE_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:role/${{ env.ROLE_NAME }}"
+          echo "role-arn=${AWS_ROLE_ARN}" >> $GITHUB_OUTPUT
+          echo "✅ Using Role: ${AWS_ROLE_ARN}"
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ steps.aws-config.outputs.role-arn }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest
+      
+      - name: Build and push Docker image
+        id: build-push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./app
+          file: ./app/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
+      - name: Image digest
+        run: echo "Image pushed with digest ${{ steps.build-push.outputs.digest }}"
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        continue-on-error: true
+        with:
+          image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:latest
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always() && hashFiles('trivy-results.sarif') != ''
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Run Trivy vulnerability scanner (table output)
+        uses: aquasecurity/trivy-action@master
+        continue-on-error: true
+        with:
+          image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:latest
+          format: 'table'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          exit-code: '0'
+      
+      # SECURITY GATE - Currently commented out
+      # Uncomment to enable build failure on critical/high vulnerabilities
+      # - name: Scan for vulnerabilities with threshold check
+      #   id: trivy_threshold
+      #   uses: aquasecurity/trivy-action@master
+      #   with:
+      #     image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:latest
+      #     format: 'json'
+      #     output: 'trivy-results.json'
+      #     severity: 'CRITICAL,HIGH'
+      #     exit-code: '0'  # Don't fail here, we'll check manually
+      
+      # - name: Parse vulnerability results
+      #   id: parse_vulns
+      #   if: always()
+      #   run: |
+      #     if [ -f trivy-results.json ]; then
+      #       # Count vulnerabilities by severity
+      #       CRITICAL_COUNT=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' trivy-results.json)
+      #       HIGH_COUNT=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH")] | length' trivy-results.json)
+      #       
+      #       echo "critical_count=$CRITICAL_COUNT" >> $GITHUB_OUTPUT
+      #       echo "high_count=$HIGH_COUNT" >> $GITHUB_OUTPUT
+      #       
+      #       echo "🔍 Vulnerability Summary:"
+      #       echo "  CRITICAL: $CRITICAL_COUNT"
+      #       echo "  HIGH: $HIGH_COUNT"
+      #       
+      #       # Create detailed list of critical vulnerabilities
+      #       if [ "$CRITICAL_COUNT" -gt 0 ]; then
+      #         echo ""
+      #         echo "❌ CRITICAL Vulnerabilities Found:"
+      #         jq -r '.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL") | "  - \(.VulnerabilityID): \(.PkgName) \(.InstalledVersion) -> \(.FixedVersion // "no fix available")"' trivy-results.json | head -20
+      #       fi
+      #       
+      #       if [ "$HIGH_COUNT" -gt 0 ]; then
+      #         echo ""
+      #         echo "⚠️  HIGH Vulnerabilities Found:"
+      #         jq -r '.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH") | "  - \(.VulnerabilityID): \(.PkgName) \(.InstalledVersion) -> \(.FixedVersion // "no fix available")"' trivy-results.json | head -10
+      #       fi
+      #     else
+      #       echo "critical_count=0" >> $GITHUB_OUTPUT
+      #       echo "high_count=0" >> $GITHUB_OUTPUT
+      #     fi
+      
+      # - name: Check vulnerability thresholds
+      #   if: steps.parse_vulns.outputs.critical_count != '' || steps.parse_vulns.outputs.high_count != ''
+      #   run: |
+      #     CRITICAL_COUNT=${{ steps.parse_vulns.outputs.critical_count }}
+      #     HIGH_COUNT=${{ steps.parse_vulns.outputs.high_count }}
+      #     
+      #     # Define thresholds
+      #     CRITICAL_THRESHOLD=0   # Zero tolerance for CRITICAL
+      #     HIGH_THRESHOLD=5       # Allow up to 5 HIGH vulnerabilities
+      #     
+      #     echo "=========================================="
+      #     echo "Security Gate - Vulnerability Threshold Check"
+      #     echo "=========================================="
+      #     echo ""
+      #     echo "Current Vulnerabilities:"
+      #     echo "  CRITICAL: $CRITICAL_COUNT (threshold: $CRITICAL_THRESHOLD)"
+      #     echo "  HIGH: $HIGH_COUNT (threshold: $HIGH_THRESHOLD)"
+      #     echo ""
+      #     
+      #     FAIL_BUILD=false
+      #     
+      #     if [ "$CRITICAL_COUNT" -gt "$CRITICAL_THRESHOLD" ]; then
+      #       echo "❌ CRITICAL vulnerabilities exceed threshold!"
+      #       echo "   Found: $CRITICAL_COUNT, Maximum allowed: $CRITICAL_THRESHOLD"
+      #       FAIL_BUILD=true
+      #     fi
+      #     
+      #     if [ "$HIGH_COUNT" -gt "$HIGH_THRESHOLD" ]; then
+      #       echo "❌ HIGH vulnerabilities exceed threshold!"
+      #       echo "   Found: $HIGH_COUNT, Maximum allowed: $HIGH_THRESHOLD"
+      #       FAIL_BUILD=true
+      #     fi
+      #     
+      #     if [ "$FAIL_BUILD" = true ]; then
+      #       echo ""
+      #       echo "🛑 BUILD FAILED - Security vulnerabilities exceed acceptable thresholds"
+      #       echo ""
+      #       echo "Required Actions:"
+      #       echo "  1. Review vulnerability details in the scan output above"
+      #       echo "  2. Update base images to patched versions"
+      #       echo "  3. Update vulnerable packages in Dockerfile"
+      #       echo "  4. Rebuild and re-scan the image"
+      #       echo ""
+      #       echo "To override (not recommended):"
+      #       echo "  - Adjust CRITICAL_THRESHOLD or HIGH_THRESHOLD in workflow"
+      #       echo "  - Document accepted risks in security review"
+      #       echo ""
+      #       exit 1
+      #     else
+      #       echo "✅ Security gate passed"
+      #       echo "   Vulnerabilities are within acceptable thresholds"
+      #       echo "   Build can proceed to deployment"
+      #     fi
+      
+      # - name: Create security summary
+      #   if: always() && (steps.parse_vulns.outputs.critical_count != '' || steps.parse_vulns.outputs.high_count != '')
+      #   run: |
+      #     CRITICAL_COUNT=${{ steps.parse_vulns.outputs.critical_count }}
+      #     HIGH_COUNT=${{ steps.parse_vulns.outputs.high_count }}
+      #     
+      #     cat >> $GITHUB_STEP_SUMMARY << EOF
+      #     ## 🔒 Security Scan Results
+      #     
+      #     ### Vulnerability Summary
+      #     
+      #     | Severity | Count | Threshold | Status |
+      #     |----------|-------|-----------|--------|
+      #     | 🔴 CRITICAL | $CRITICAL_COUNT | 0 | $([ "$CRITICAL_COUNT" -eq 0 ] && echo "✅ Pass" || echo "❌ **FAIL**") |
+      #     | 🟠 HIGH | $HIGH_COUNT | 5 | $([ "$HIGH_COUNT" -le 5 ] && echo "✅ Pass" || echo "❌ **FAIL**") |
+      #     
+      #     ### Policy
+      #     - **CRITICAL**: Zero tolerance - any CRITICAL vulnerability fails the build
+      #     - **HIGH**: Maximum 5 allowed - exceeding this fails the build
+      #     
+      #     ### Next Steps
+      #     $(if [ "$CRITICAL_COUNT" -gt 0 ] || [ "$HIGH_COUNT" -gt 5 ]; then
+      #       echo "#### ❌ Build Failed"
+      #       echo ""
+      #       echo "The image contains vulnerabilities that exceed acceptable thresholds."
+      #       echo ""
+      #       echo "**Required Actions:**"
+      #       echo "1. Review the detailed vulnerability report above"
+      #       echo "2. Update base images: \`FROM node:18-alpine\` → \`FROM node:20-alpine\`"
+      #       echo "3. Update vulnerable packages in package.json"
+      #       echo "4. Rebuild and re-scan"
+      #       echo ""
+      #       echo "**Vulnerability Details:**"
+      #       echo "See the Trivy scan output above for specific CVEs and remediation guidance."
+      #     else
+      #       echo "#### ✅ Build Passed"
+      #       echo ""
+      #       echo "The image passed security scanning with vulnerabilities within acceptable limits."
+      #       echo ""
+      #       if [ "$CRITICAL_COUNT" -eq 0 ] && [ "$HIGH_COUNT" -eq 0 ]; then
+      #         echo "🎉 No CRITICAL or HIGH vulnerabilities found!"
+      #       else
+      #         echo "⚠️  Note: $HIGH_COUNT HIGH vulnerabilities present but within threshold."
+      #         echo "Consider addressing these in future updates."
+      #       fi
+      #     fi)
+      #     
+      #     ### Full Report
+      #     - Detailed SARIF report uploaded to Security tab
+      #     - Review all findings: [Security → Code scanning alerts](../../security/code-scanning)
+      #     EOF
+      
+      - name: Update Kubernetes deployment (optional)
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        run: |
+          echo "Image: ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:latest"
+          echo "Update your Kubernetes deployment with this image"

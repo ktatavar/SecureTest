@@ -1,0 +1,28 @@
+{{- if .Values.loadBalancer.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.app.name }}-loadbalancer
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    app: {{ .Values.app.name }}
+    app.kubernetes.io/name: {{ .Values.app.name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+  {{- with .Values.loadBalancer.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.loadBalancer.type }}
+  selector:
+    app: {{ .Values.app.name }}
+    app.kubernetes.io/name: {{ .Values.app.name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+  - port: {{ .Values.loadBalancer.port }}
+    targetPort: {{ .Values.loadBalancer.targetPort }}
+    protocol: TCP
+    name: http
+  externalTrafficPolicy: {{ .Values.loadBalancer.externalTrafficPolicy }}
+{{- end }}
