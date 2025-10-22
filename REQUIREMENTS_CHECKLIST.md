@@ -122,7 +122,7 @@ cat .github/workflows/terraform-deploy.yml
 
 | # | Requirement | Status | Implementation |
 |---|-------------|--------|----------------|
-| 4.1 | Control plane audit logging configured | ℹ️ | EKS control plane logging can be enabled via Terraform |
+| 4.1 | Control plane audit logging configured | ℹ️ | Available in `terraform/main.tf:327-334` (commented for cost savings) |
 | 4.2 | At least one preventative cloud control | ✅ | Security group restrictions, IAM policies |
 | 4.3 | At least one detective cloud control | ✅ | Security scanning in CI/CD pipelines |
 | 4.4 | Demonstrate these tools and their impact | ✅ | Documented in presentation and verification scripts |

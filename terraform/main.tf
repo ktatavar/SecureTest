@@ -324,6 +324,15 @@ module "eks" {
 
   enable_irsa = true
 
+  # Control Plane Logging (Optional - Currently Disabled)
+  # Uncomment to enable CloudWatch logging for EKS control plane
+  # Cost: ~$15-75/month depending on cluster activity
+  # Useful for: Compliance, audit trails, security monitoring, troubleshooting
+  # cluster_enabled_log_types = ["api", "audit", "authenticator", "controllerManager", "scheduler"]
+  
+  # To enable only critical logs (recommended for production):
+  # cluster_enabled_log_types = ["api", "audit"]
+
   eks_managed_node_groups = {
     private = {
       name = "private-node-group"
