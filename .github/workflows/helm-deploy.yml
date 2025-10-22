@@ -1,0 +1,353 @@
+name: Helm - Deploy to EKS
+
+# DISABLED BY DEFAULT - Uncomment 'on:' section to enable
+# on:
+#   workflow_dispatch:
+#     inputs:
+#       environment:
+#         description: 'Deployment environment'
+#         required: true
+#         default: 'dev'
+#         type: choice
+#         options:
+#           - dev
+#           - staging
+#           - prod
+#       chart_version:
+#         description: 'Helm chart version'
+#         required: true
+#         default: '1.0.0'
+#       chart_source:
+#         description: 'Chart source'
+#         required: true
+#         default: 'local'
+#         type: choice
+#         options:
+#           - local
+#           - git
+#           - oci
+#           - repo
+#   push:
+#     branches:
+#       - main
+#     paths:
+#       - 'helm/**'
+#       - '.github/workflows/helm-deploy.yml'
+
+# Workflow is DISABLED - remove comments above to enable
+
+env:
+  AWS_REGION: us-east-1
+  EKS_CLUSTER_NAME: wiz-exercise-cluster-v2
+  HELM_VERSION: v3.13.0
+  KUBECTL_VERSION: v1.28.0
+
+jobs:
+  helm-deploy:
+    name: Deploy Helm Chart
+    runs-on: ubuntu-latest
+    # Uncomment to enable workflow
+    if: false  # DISABLED - change to 'true' or remove this line to enable
+    
+    permissions:
+      id-token: write
+      contents: read
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: Verify AWS identity
+        run: |
+          aws sts get-caller-identity
+          echo "AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)" >> $GITHUB_ENV
+          
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: ${{ env.HELM_VERSION }}
+          
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: ${{ env.KUBECTL_VERSION }}
+          
+      - name: Configure kubectl for EKS
+        run: |
+          aws eks update-kubeconfig \
+            --region ${{ env.AWS_REGION }} \
+            --name ${{ env.EKS_CLUSTER_NAME }}
+          
+          # Verify connection
+          kubectl cluster-info
+          kubectl get nodes
+          
+      - name: Get MongoDB IP from Terraform
+        id: terraform
+        run: |
+          cd terraform
+          
+          # Initialize Terraform (read-only)
+          terraform init -backend=true -input=false
+          
+          # Get MongoDB IP
+          MONGODB_IP=$(terraform output -raw mongodb_vm_public_ip 2>/dev/null || echo "")
+          
+          if [ -z "$MONGODB_IP" ]; then
+            echo "❌ Failed to get MongoDB IP from Terraform"
+            exit 1
+          fi
+          
+          echo "mongodb_ip=$MONGODB_IP" >> $GITHUB_OUTPUT
+          echo "MongoDB IP: $MONGODB_IP"
+          
+      - name: Lint Helm chart
+        if: ${{ github.event.inputs.chart_source == 'local' || github.event.inputs.chart_source == '' }}
+        run: |
+          helm lint ./helm/todo-app
+          
+      - name: Package Helm chart
+        if: ${{ github.event.inputs.chart_source == 'local' || github.event.inputs.chart_source == '' }}
+        run: |
+          cd helm
+          helm package todo-app
+          ls -lh todo-app-*.tgz
+          
+      - name: Prepare chart source
+        id: chart
+        run: |
+          CHART_SOURCE="${{ github.event.inputs.chart_source }}"
+          CHART_VERSION="${{ github.event.inputs.chart_version }}"
+          
+          # Default to local if not specified
+          CHART_SOURCE=${CHART_SOURCE:-local}
+          CHART_VERSION=${CHART_VERSION:-1.0.0}
+          
+          case $CHART_SOURCE in
+            local)
+              CHART_PATH="./helm/todo-app"
+              ;;
+            git)
+              CHART_PATH="https://github.com/${{ github.repository }}/releases/download/v${CHART_VERSION}/todo-app-${CHART_VERSION}.tgz"
+              ;;
+            oci)
+              CHART_PATH="oci://ghcr.io/${{ github.repository_owner }}/securetest/todo-app"
+              ;;
+            repo)
+              helm repo add securetest https://${{ github.repository_owner }}.github.io/SecureTest/
+              helm repo update
+              CHART_PATH="securetest/todo-app"
+              ;;
+            *)
+              echo "❌ Invalid chart source: $CHART_SOURCE"
+              exit 1
+              ;;
+          esac
+          
+          echo "chart_path=$CHART_PATH" >> $GITHUB_OUTPUT
+          echo "chart_source=$CHART_SOURCE" >> $GITHUB_OUTPUT
+          echo "chart_version=$CHART_VERSION" >> $GITHUB_OUTPUT
+          
+          echo "Chart source: $CHART_SOURCE"
+          echo "Chart path: $CHART_PATH"
+          echo "Chart version: $CHART_VERSION"
+          
+      - name: Check if Helm release exists
+        id: release_check
+        run: |
+          if helm list -n todo-app | grep -q "todo-app"; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "action=upgrade" >> $GITHUB_OUTPUT
+            echo "Helm release exists - will upgrade"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "action=install" >> $GITHUB_OUTPUT
+            echo "Helm release does not exist - will install"
+          fi
+          
+      - name: Deploy with Helm
+        run: |
+          ACTION="${{ steps.release_check.outputs.action }}"
+          CHART_PATH="${{ steps.chart.outputs.chart_path }}"
+          CHART_SOURCE="${{ steps.chart.outputs.chart_source }}"
+          CHART_VERSION="${{ steps.chart.outputs.chart_version }}"
+          MONGODB_IP="${{ steps.terraform.outputs.mongodb_ip }}"
+          ENVIRONMENT="${{ github.event.inputs.environment }}"
+          
+          # Default environment
+          ENVIRONMENT=${ENVIRONMENT:-dev}
+          
+          # Build Helm arguments
+          HELM_ARGS=(
+            --namespace todo-app
+            --set mongodb.uri="mongodb://${MONGODB_IP}:27017/todoapp"
+            --set image.repository="${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/todo-app"
+            --set image.tag="latest"
+            --wait
+            --timeout 5m
+          )
+          
+          # Add version for non-local sources
+          if [ "$CHART_SOURCE" != "local" ] && [ "$CHART_SOURCE" != "repo" ]; then
+            HELM_ARGS+=(--version "$CHART_VERSION")
+          fi
+          
+          # Deploy
+          if [ "$ACTION" = "install" ]; then
+            echo "Installing Helm chart..."
+            helm install todo-app "$CHART_PATH" \
+              --create-namespace \
+              "${HELM_ARGS[@]}"
+          else
+            echo "Upgrading Helm chart..."
+            helm upgrade todo-app "$CHART_PATH" \
+              "${HELM_ARGS[@]}"
+          fi
+          
+          echo "✅ Helm $ACTION completed successfully"
+          
+      - name: Wait for pods to be ready
+        run: |
+          echo "Waiting for pods to be ready..."
+          kubectl wait --for=condition=ready pod \
+            -l app=todo-app \
+            -n todo-app \
+            --timeout=300s
+          
+          echo "✅ All pods are ready"
+          
+      - name: Get deployment status
+        run: |
+          echo "=========================================="
+          echo "Deployment Status"
+          echo "=========================================="
+          echo ""
+          
+          echo "Helm Release:"
+          helm status todo-app -n todo-app
+          
+          echo ""
+          echo "Kubernetes Resources:"
+          kubectl get all -n todo-app
+          
+          echo ""
+          echo "Pods:"
+          kubectl get pods -n todo-app -o wide
+          
+          echo ""
+          echo "Services:"
+          kubectl get svc -n todo-app
+          
+      - name: Get LoadBalancer URL
+        id: lb_url
+        run: |
+          echo "Waiting for LoadBalancer to be ready..."
+          
+          for i in {1..30}; do
+            LB_URL=$(kubectl get svc -n todo-app todo-app-loadbalancer \
+              -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
+            
+            if [ -n "$LB_URL" ]; then
+              echo "lb_url=$LB_URL" >> $GITHUB_OUTPUT
+              echo "✅ LoadBalancer URL: http://$LB_URL"
+              break
+            fi
+            
+            echo "Waiting for LoadBalancer... ($i/30)"
+            sleep 10
+          done
+          
+          if [ -z "$LB_URL" ]; then
+            echo "⚠️  LoadBalancer URL not ready yet"
+            echo "Check status with: kubectl get svc -n todo-app todo-app-loadbalancer"
+          fi
+          
+      - name: Test application
+        if: steps.lb_url.outputs.lb_url != ''
+        run: |
+          LB_URL="${{ steps.lb_url.outputs.lb_url }}"
+          
+          echo "Testing application health endpoint..."
+          
+          # Wait a bit for app to be fully ready
+          sleep 30
+          
+          # Test health endpoint
+          for i in {1..10}; do
+            if curl -f -s "http://${LB_URL}/health" > /dev/null; then
+              echo "✅ Application is healthy"
+              curl -s "http://${LB_URL}/health" | jq .
+              break
+            fi
+            
+            echo "Waiting for application... ($i/10)"
+            sleep 10
+          done
+          
+      - name: Verify wizexercise.txt
+        run: |
+          echo "Verifying wizexercise.txt file..."
+          kubectl exec -n todo-app deployment/todo-app -- cat /app/wizexercise.txt
+          
+      - name: Create deployment summary
+        if: always()
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          # Helm Deployment Summary
+          
+          ## Configuration
+          - **Environment**: ${{ github.event.inputs.environment || 'dev' }}
+          - **Chart Source**: ${{ steps.chart.outputs.chart_source }}
+          - **Chart Version**: ${{ steps.chart.outputs.chart_version }}
+          - **Action**: ${{ steps.release_check.outputs.action }}
+          - **MongoDB IP**: ${{ steps.terraform.outputs.mongodb_ip }}
+          
+          ## Deployment Status
+          - **Helm Release**: \`todo-app\`
+          - **Namespace**: \`todo-app\`
+          - **Cluster**: \`${{ env.EKS_CLUSTER_NAME }}\`
+          - **Region**: \`${{ env.AWS_REGION }}\`
+          
+          ## Application URL
+          EOF
+          
+          if [ -n "${{ steps.lb_url.outputs.lb_url }}" ]; then
+            echo "- **LoadBalancer**: http://${{ steps.lb_url.outputs.lb_url }}" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- **LoadBalancer**: Pending (check status later)" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          
+          ## Verification Commands
+          \`\`\`bash
+          # Check Helm release
+          helm status todo-app -n todo-app
+          
+          # Check pods
+          kubectl get pods -n todo-app
+          
+          # Check LoadBalancer
+          kubectl get svc -n todo-app todo-app-loadbalancer
+          
+          # View logs
+          kubectl logs -f -l app=todo-app -n todo-app
+          \`\`\`
+          EOF
+          
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "❌ Helm deployment failed"
+          echo "Check the logs above for details"
+          
+          # Show recent events
+          echo ""
+          echo "Recent Kubernetes events:"
+          kubectl get events -n todo-app --sort-by='.lastTimestamp' | tail -20
