@@ -3,16 +3,13 @@ name: Build and Push Docker Image
 on:
   push:
     branches:
-      - main
-      - master
-      - 'claude/**'  # Allow triggering on claude branches
+      - main  # Only trigger on main branch
     paths:
       - 'app/**'
       - '.github/workflows/build-and-push.yml'
   pull_request:
     branches:
-      - main
-      - master
+      - main  # Only for PRs to main
     paths:
       - 'app/**'
   workflow_dispatch:  # Allow manual trigger
@@ -258,7 +255,7 @@ jobs:
       #     EOF
       
       - name: Update Kubernetes deployment (optional)
-        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        if: github.ref == 'refs/heads/main'
         run: |
           echo "Image: ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:latest"
           echo "Update your Kubernetes deployment with this image"
