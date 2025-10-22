@@ -1,0 +1,130 @@
+# Default values for todo-app Helm chart
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# Namespace configuration
+namespace:
+  create: true
+  name: todo-app
+
+# Replica count
+replicaCount: 3
+
+# Image configuration
+image:
+  repository: 512231857943.dkr.ecr.us-east-1.amazonaws.com/todo-app
+  pullPolicy: Always
+  tag: "latest"
+
+# Service Account configuration
+serviceAccount:
+  create: true
+  name: todo-app-admin
+  # INSECURE: Grants cluster-admin privileges
+  clusterAdmin: true
+
+# Application configuration
+app:
+  name: todo-app
+  port: 3000
+  
+# MongoDB configuration
+mongodb:
+  uri: "mongodb://18.212.74.58:27017/todoapp"
+  username: "todouser"
+  password: "changeme123"
+  database: "todoapp"
+
+# Resource limits
+resources:
+  requests:
+    memory: "128Mi"
+    cpu: "100m"
+  limits:
+    memory: "256Mi"
+    cpu: "500m"
+
+# Health check probes
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 3000
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 3000
+  initialDelaySeconds: 10
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 3000
+  sessionAffinity: ClientIP
+
+# LoadBalancer configuration
+loadBalancer:
+  enabled: true
+  type: LoadBalancer
+  port: 80
+  targetPort: 3000
+  externalTrafficPolicy: Cluster
+  annotations: {}
+    # AWS NLB example:
+    # service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    # GCP example:
+    # cloud.google.com/load-balancer-type: "External"
+
+# Node selector
+nodeSelector:
+  subnet-type: private
+
+# Network Policy
+networkPolicy:
+  enabled: true
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+      - namespaceSelector: {}
+      ports:
+      - protocol: TCP
+        port: 3000
+  egress:
+    # Allow DNS
+    - to:
+      - namespaceSelector: {}
+      ports:
+      - protocol: UDP
+        port: 53
+    # Allow MongoDB
+    - to:
+      - podSelector: {}
+      ports:
+      - protocol: TCP
+        port: 27017
+    # Allow HTTPS
+    - to:
+      - namespaceSelector: {}
+      ports:
+      - protocol: TCP
+        port: 443
+
+# Tolerations and affinity
+tolerations: []
+affinity: {}
+
+# Additional labels
+labels: {}
+
+# Additional annotations
+annotations: {}

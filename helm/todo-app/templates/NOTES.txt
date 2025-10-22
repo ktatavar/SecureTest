@@ -1,0 +1,55 @@
+🎉 Todo App has been deployed!
+
+Chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+Release: {{ .Release.Name }}
+Namespace: {{ .Values.namespace.name }}
+
+📊 Deployment Status:
+  Replicas: {{ .Values.replicaCount }}
+  Image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+
+🔗 To get the application URL:
+
+{{- if .Values.loadBalancer.enabled }}
+  NOTE: It may take a few minutes for the LoadBalancer IP to be available.
+
+  export SERVICE_IP=$(kubectl get svc --namespace {{ .Values.namespace.name }} {{ .Values.app.name }}-loadbalancer -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+  echo "Application URL: http://$SERVICE_IP"
+
+  Or run:
+  kubectl get svc --namespace {{ .Values.namespace.name }} {{ .Values.app.name }}-loadbalancer -w
+{{- else }}
+  export POD_NAME=$(kubectl get pods --namespace {{ .Values.namespace.name }} -l "app={{ .Values.app.name }}" -o jsonpath="{.items[0].metadata.name}")
+  kubectl port-forward $POD_NAME 8080:{{ .Values.app.port }}
+  echo "Application URL: http://127.0.0.1:8080"
+{{- end }}
+
+📋 Useful Commands:
+
+  # View all resources
+  kubectl get all -n {{ .Values.namespace.name }}
+
+  # View pods
+  kubectl get pods -n {{ .Values.namespace.name }}
+
+  # View logs
+  kubectl logs -f -l app={{ .Values.app.name }} -n {{ .Values.namespace.name }}
+
+  # Verify wizexercise.txt file
+  kubectl exec -n {{ .Values.namespace.name }} deployment/{{ .Values.app.name }} -- cat /app/wizexercise.txt
+
+  # Check cluster-admin role binding
+  kubectl get clusterrolebinding {{ .Values.app.name }}-admin-binding
+
+⚠️  SECURITY WARNING:
+  This deployment contains INTENTIONAL security vulnerabilities for the Wiz Technical Exercise:
+  - Cluster-admin privileges granted to pods
+  - Outdated MongoDB version
+  - Public S3 bucket access
+  - Weak credentials
+  
+  DO NOT use this configuration in production!
+
+📚 For more information:
+  helm status {{ .Release.Name }} -n {{ .Values.namespace.name }}
+  helm get all {{ .Release.Name }} -n {{ .Values.namespace.name }}

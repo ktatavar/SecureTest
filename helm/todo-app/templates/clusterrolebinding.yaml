@@ -1,0 +1,30 @@
+{{- if .Values.serviceAccount.clusterAdmin }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Values.app.name }}-admin-binding
+  labels:
+    app: {{ .Values.app.name }}
+    app.kubernetes.io/name: {{ .Values.app.name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin  # INSECURE: Grants full cluster admin privileges
+subjects:
+- kind: ServiceAccount
+  name: {{ .Values.serviceAccount.name }}
+  namespace: {{ .Values.namespace.name }}
+---
+# WARNING: This configuration is INTENTIONALLY INSECURE
+# The todo-app pods have cluster-admin privileges, allowing them to:
+# - Create, modify, and delete any resource in any namespace
+# - Read secrets from any namespace
+# - Modify RBAC policies
+# - Create new service accounts with elevated privileges
+# - Access the Kubernetes API with full administrative rights
+#
+# This is a severe security misconfiguration that should NEVER be used in production.
+# It is implemented here solely for the Wiz Technical Exercise demonstration purposes.
+{{- end }}
