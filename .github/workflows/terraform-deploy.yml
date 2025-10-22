@@ -84,6 +84,136 @@ jobs:
           working_directory: terraform
           soft_fail: true
 
+      - name: Run Checkov IaC Scanner
+        id: checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: terraform/
+          framework: terraform
+          output_format: cli
+          soft_fail: false  # Will continue but we'll check results
+          download_external_modules: true
+          
+      - name: Parse Checkov Results
+        id: checkov_results
+        if: always()
+        run: |
+          # Checkov exit codes:
+          # 0 = no issues
+          # 1 = issues found
+          # We'll parse the output to count critical/high
+          
+          echo "Checkov scan completed"
+          echo "Exit code: ${{ steps.checkov.outcome }}"
+          
+          # For now, we'll use the outcome
+          # In a real scenario, you'd parse the JSON output
+          if [ "${{ steps.checkov.outcome }}" == "failure" ]; then
+            echo "has_issues=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_issues=false" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Run Checkov with JSON output for analysis
+        id: checkov_json
+        uses: bridgecrewio/checkov-action@master
+        continue-on-error: true
+        with:
+          directory: terraform/
+          framework: terraform
+          output_format: json
+          output_file_path: checkov-results.json
+          soft_fail: true
+          
+      - name: Analyze Checkov Results
+        id: analyze_checkov
+        if: always() && hashFiles('terraform/checkov-results.json') != ''
+        working-directory: terraform
+        run: |
+          if [ -f checkov-results.json ]; then
+            # Count failed checks by severity
+            CRITICAL_COUNT=$(jq '[.results.failed_checks[]? | select(.check_class | contains("CRITICAL") or contains("CKV_AWS"))] | length' checkov-results.json 2>/dev/null || echo "0")
+            HIGH_COUNT=$(jq '[.results.failed_checks[]? | select(.check_class | contains("HIGH"))] | length' checkov-results.json 2>/dev/null || echo "0")
+            TOTAL_FAILED=$(jq '.summary.failed // 0' checkov-results.json 2>/dev/null || echo "0")
+            
+            echo "critical_count=$CRITICAL_COUNT" >> $GITHUB_OUTPUT
+            echo "high_count=$HIGH_COUNT" >> $GITHUB_OUTPUT
+            echo "total_failed=$TOTAL_FAILED" >> $GITHUB_OUTPUT
+            
+            echo "🔍 Checkov Results:"
+            echo "  Total Failed Checks: $TOTAL_FAILED"
+            echo "  Critical: $CRITICAL_COUNT"
+            echo "  High: $HIGH_COUNT"
+            
+            # List some failed checks
+            if [ "$TOTAL_FAILED" -gt 0 ]; then
+              echo ""
+              echo "Failed Checks (first 10):"
+              jq -r '.results.failed_checks[]? | "  - [\(.check_id)] \(.check_name) - \(.file_path):\(.file_line_range[])"' checkov-results.json 2>/dev/null | head -10 || true
+            fi
+          else
+            echo "critical_count=0" >> $GITHUB_OUTPUT
+            echo "high_count=0" >> $GITHUB_OUTPUT
+            echo "total_failed=0" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Check Security Thresholds
+        if: always() && steps.analyze_checkov.outputs.total_failed != ''
+        run: |
+          CRITICAL_COUNT=${{ steps.analyze_checkov.outputs.critical_count }}
+          HIGH_COUNT=${{ steps.analyze_checkov.outputs.high_count }}
+          TOTAL_FAILED=${{ steps.analyze_checkov.outputs.total_failed }}
+          
+          # Define thresholds
+          CRITICAL_THRESHOLD=0  # Zero tolerance for CRITICAL
+          HIGH_THRESHOLD=5      # Allow up to 5 HIGH severity issues
+          
+          echo "=========================================="
+          echo "Security Threshold Check"
+          echo "=========================================="
+          echo "CRITICAL issues: $CRITICAL_COUNT (threshold: $CRITICAL_THRESHOLD)"
+          echo "HIGH issues: $HIGH_COUNT (threshold: $HIGH_THRESHOLD)"
+          echo "Total failed checks: $TOTAL_FAILED"
+          echo ""
+          
+          FAIL_DEPLOYMENT=false
+          
+          if [ "$CRITICAL_COUNT" -gt "$CRITICAL_THRESHOLD" ]; then
+            echo "❌ CRITICAL security issues exceed threshold!"
+            echo "   Found: $CRITICAL_COUNT, Allowed: $CRITICAL_THRESHOLD"
+            FAIL_DEPLOYMENT=true
+          fi
+          
+          if [ "$HIGH_COUNT" -gt "$HIGH_THRESHOLD" ]; then
+            echo "❌ HIGH security issues exceed threshold!"
+            echo "   Found: $HIGH_COUNT, Allowed: $HIGH_THRESHOLD"
+            FAIL_DEPLOYMENT=true
+          fi
+          
+          if [ "$FAIL_DEPLOYMENT" = true ]; then
+            echo ""
+            echo "🛑 DEPLOYMENT BLOCKED due to security policy violations"
+            echo ""
+            echo "Required Actions:"
+            echo "  1. Review Checkov findings above"
+            echo "  2. Fix CRITICAL and HIGH severity issues in Terraform code"
+            echo "  3. Common fixes:"
+            echo "     - Enable encryption for S3 buckets"
+            echo "     - Add security group rules"
+            echo "     - Enable logging and monitoring"
+            echo "     - Use latest AMI versions"
+            echo "  4. Re-run the workflow after fixes"
+            echo ""
+            echo "To override (not recommended):"
+            echo "  - Adjust thresholds in workflow file"
+            echo "  - Document accepted risks"
+            echo ""
+            exit 1
+          else
+            echo "✅ Security checks passed"
+            echo "   Deployment can proceed"
+          fi
+
       - name: Terraform Plan
         id: plan
         if: github.event.inputs.action == 'plan' || github.event.inputs.action == 'apply'

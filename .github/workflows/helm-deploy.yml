@@ -137,6 +137,107 @@ jobs:
           cd helm
           helm package todo-app
           ls -lh todo-app-*.tgz
+      
+      # SECURITY SCANNING - Helm Chart IaC
+      - name: Scan Helm chart with Checkov
+        id: checkov_helm
+        uses: bridgecrewio/checkov-action@master
+        continue-on-error: true
+        with:
+          directory: helm/todo-app/
+          framework: helm
+          output_format: json
+          output_file_path: checkov-helm-results.json
+          soft_fail: true
+          
+      - name: Analyze Helm chart security
+        id: analyze_helm
+        if: always() && hashFiles('checkov-helm-results.json') != ''
+        run: |
+          if [ -f checkov-helm-results.json ]; then
+            # Count failed checks
+            TOTAL_FAILED=$(jq '.summary.failed // 0' checkov-helm-results.json 2>/dev/null || echo "0")
+            CRITICAL_COUNT=$(jq '[.results.failed_checks[]? | select(.severity == "CRITICAL")] | length' checkov-helm-results.json 2>/dev/null || echo "0")
+            HIGH_COUNT=$(jq '[.results.failed_checks[]? | select(.severity == "HIGH")] | length' checkov-helm-results.json 2>/dev/null || echo "0")
+            
+            echo "critical_count=$CRITICAL_COUNT" >> $GITHUB_OUTPUT
+            echo "high_count=$HIGH_COUNT" >> $GITHUB_OUTPUT
+            echo "total_failed=$TOTAL_FAILED" >> $GITHUB_OUTPUT
+            
+            echo "🔍 Helm Chart Security Scan Results:"
+            echo "  Total Failed Checks: $TOTAL_FAILED"
+            echo "  Critical: $CRITICAL_COUNT"
+            echo "  High: $HIGH_COUNT"
+            
+            # List failed checks
+            if [ "$TOTAL_FAILED" -gt 0 ]; then
+              echo ""
+              echo "Failed Checks:"
+              jq -r '.results.failed_checks[]? | "  - [\(.check_id)] \(.check_name) - \(.file_path)"' checkov-helm-results.json 2>/dev/null | head -10 || true
+            fi
+          else
+            echo "critical_count=0" >> $GITHUB_OUTPUT
+            echo "high_count=0" >> $GITHUB_OUTPUT
+            echo "total_failed=0" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Check Helm chart security thresholds
+        if: always() && steps.analyze_helm.outputs.total_failed != ''
+        run: |
+          CRITICAL_COUNT=${{ steps.analyze_helm.outputs.critical_count }}
+          HIGH_COUNT=${{ steps.analyze_helm.outputs.high_count }}
+          TOTAL_FAILED=${{ steps.analyze_helm.outputs.total_failed }}
+          
+          # Define thresholds
+          CRITICAL_THRESHOLD=0  # Zero tolerance for CRITICAL
+          HIGH_THRESHOLD=10     # Allow up to 10 HIGH severity issues
+          
+          echo "=========================================="
+          echo "Helm Chart Security Threshold Check"
+          echo "=========================================="
+          echo "CRITICAL issues: $CRITICAL_COUNT (threshold: $CRITICAL_THRESHOLD)"
+          echo "HIGH issues: $HIGH_COUNT (threshold: $HIGH_THRESHOLD)"
+          echo "Total failed checks: $TOTAL_FAILED"
+          echo ""
+          
+          FAIL_DEPLOYMENT=false
+          
+          if [ "$CRITICAL_COUNT" -gt "$CRITICAL_THRESHOLD" ]; then
+            echo "❌ CRITICAL security issues in Helm chart exceed threshold!"
+            echo "   Found: $CRITICAL_COUNT, Allowed: $CRITICAL_THRESHOLD"
+            FAIL_DEPLOYMENT=true
+          fi
+          
+          if [ "$HIGH_COUNT" -gt "$HIGH_THRESHOLD" ]; then
+            echo "❌ HIGH security issues in Helm chart exceed threshold!"
+            echo "   Found: $HIGH_COUNT, Allowed: $HIGH_THRESHOLD"
+            FAIL_DEPLOYMENT=true
+          fi
+          
+          if [ "$FAIL_DEPLOYMENT" = true ]; then
+            echo ""
+            echo "🛑 DEPLOYMENT BLOCKED due to Helm chart security issues"
+            echo ""
+            echo "Required Actions:"
+            echo "  1. Review Checkov findings above"
+            echo "  2. Fix CRITICAL and HIGH severity issues in Helm templates"
+            echo "  3. Common Helm security issues:"
+            echo "     - Remove privileged containers"
+            echo "     - Add security contexts"
+            echo "     - Set resource limits"
+            echo "     - Use read-only root filesystem"
+            echo "     - Drop unnecessary capabilities"
+            echo "  4. Re-run the workflow after fixes"
+            echo ""
+            echo "To override (not recommended):"
+            echo "  - Adjust thresholds in workflow file"
+            echo "  - Document accepted risks"
+            echo ""
+            exit 1
+          else
+            echo "✅ Helm chart security checks passed"
+            echo "   Deployment can proceed"
+          fi
           
       - name: Prepare chart source
         id: chart
