@@ -12,6 +12,16 @@ on:
           - plan
           - apply
           - destroy
+  workflow_call:  # Allow being called by other workflows
+    inputs:
+      action:
+        description: 'Terraform action to perform'
+        required: false
+        default: 'apply'
+        type: string
+    secrets:
+      AWS_ROLE_ARN:
+        required: false
 
 env:
   AWS_REGION: us-east-1

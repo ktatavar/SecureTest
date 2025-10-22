@@ -13,6 +13,12 @@ on:
     paths:
       - 'app/**'
   workflow_dispatch:  # Allow manual trigger
+  workflow_call:  # Allow being called by other workflows
+    secrets:
+      AWS_ACCOUNT_ID:
+        required: false
+      AWS_ROLE_ARN:
+        required: false
 
 env:
   IMAGE_NAME: todo-app

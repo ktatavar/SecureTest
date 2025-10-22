@@ -1,40 +1,59 @@
 name: Helm - Deploy to EKS
 
-# DISABLED BY DEFAULT - Uncomment 'on:' section to enable
-# on:
-#   workflow_dispatch:
-#     inputs:
-#       environment:
-#         description: 'Deployment environment'
-#         required: true
-#         default: 'dev'
-#         type: choice
-#         options:
-#           - dev
-#           - staging
-#           - prod
-#       chart_version:
-#         description: 'Helm chart version'
-#         required: true
-#         default: '1.0.0'
-#       chart_source:
-#         description: 'Chart source'
-#         required: true
-#         default: 'local'
-#         type: choice
-#         options:
-#           - local
-#           - git
-#           - oci
-#           - repo
-#   push:
-#     branches:
-#       - main
-#     paths:
-#       - 'helm/**'
-#       - '.github/workflows/helm-deploy.yml'
-
-# Workflow is DISABLED - remove comments above to enable
+on:
+  # DISABLED - Uncomment to enable manual/push triggers
+  # workflow_dispatch:
+  #   inputs:
+  #     environment:
+  #       description: 'Deployment environment'
+  #       required: true
+  #       default: 'dev'
+  #       type: choice
+  #       options:
+  #         - dev
+  #         - staging
+  #         - prod
+  #     chart_version:
+  #       description: 'Helm chart version'
+  #       required: true
+  #       default: '1.0.0'
+  #     chart_source:
+  #       description: 'Chart source'
+  #       required: true
+  #       default: 'local'
+  #       type: choice
+  #       options:
+  #         - local
+  #         - git
+  #         - oci
+  #         - repo
+  # push:
+  #   branches:
+  #     - main
+  #   paths:
+  #     - 'helm/**'
+  #     - '.github/workflows/helm-deploy.yml'
+  
+  workflow_call:  # ENABLED - Allows being called by end-to-end workflow
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: false
+        default: 'dev'
+        type: string
+      chart_version:
+        description: 'Helm chart version'
+        required: false
+        default: '1.0.0'
+        type: string
+      chart_source:
+        description: 'Chart source'
+        required: false
+        default: 'local'
+        type: string
+    secrets:
+      AWS_ROLE_ARN:
+        required: false
 
 env:
   AWS_REGION: us-east-1
