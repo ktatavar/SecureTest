@@ -1,0 +1,126 @@
+name: Pipeline 2 - Application Build & Deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'app/**'
+      - 'helm/**'
+      - '.github/workflows/app-deploy.yml'
+      - '.github/workflows/build-and-push.yml'
+      - '.github/workflows/helm-deploy.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      chart_source:
+        description: 'Helm chart source'
+        required: false
+        default: 'local'
+        type: choice
+        options:
+          - local
+          - git
+          - oci
+          - repo
+
+jobs:
+  # Stage 1: Build and push container image
+  build-and-push:
+    name: Build & Push Container
+    uses: ./.github/workflows/build-and-push.yml
+    secrets: inherit
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+
+  # Stage 2: Deploy application with Helm
+  deploy-to-kubernetes:
+    name: Deploy to Kubernetes
+    needs: build-and-push
+    uses: ./.github/workflows/helm-deploy.yml
+    with:
+      environment: ${{ github.event.inputs.environment || 'dev' }}
+      chart_version: '1.0.0'
+      chart_source: ${{ github.event.inputs.chart_source || 'local' }}
+    secrets: inherit
+    permissions:
+      contents: read
+      id-token: write
+
+  # Stage 3: Deployment summary
+  deployment-summary:
+    name: Deployment Summary
+    runs-on: ubuntu-latest
+    needs: [build-and-push, deploy-to-kubernetes]
+    
+    steps:
+      - name: Create deployment summary
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          # 🚀 Application Deployment Complete!
+          
+          ## Pipeline 2: Application Build & Deploy
+          
+          ### Stage 1: Build & Push ✅
+          - Container image built from source code
+          - Pushed to Amazon ECR
+          - Security scanned with Trivy
+          - Tagged: `latest`, `${{ github.event.inputs.environment || 'dev' }}`
+          
+          ### Stage 2: Deploy to Kubernetes ✅
+          - Helm chart security scanned with Checkov
+          - Deployed to EKS cluster
+          - Pods running and healthy
+          - LoadBalancer provisioned
+          
+          ## Deployment Details
+          
+          - **Environment**: ${{ github.event.inputs.environment || 'dev' }}
+          - **Chart Source**: ${{ github.event.inputs.chart_source || 'local' }}
+          - **Namespace**: `todo-app`
+          - **Replicas**: 3
+          - **Deployed by**: @${{ github.actor }}
+          - **Commit**: ${{ github.sha }}
+          
+          ## Verification Commands
+          
+          ```bash
+          # Check pods
+          kubectl get pods -n todo-app
+          
+          # View logs
+          kubectl logs -f -l app=todo-app -n todo-app
+          
+          # Get LoadBalancer URL
+          kubectl get svc -n todo-app todo-app-loadbalancer
+          
+          # Check Helm release
+          helm status todo-app -n todo-app
+          ```
+          
+          ## Application Access
+          
+          Once LoadBalancer is ready (2-3 minutes), access the application at:
+          ```
+          http://<LOADBALANCER-DNS>
+          ```
+          
+          ---
+          
+          **Pipeline Duration**: Build (~5 min) + Deploy (~7 min) = ~12 minutes total
+          
+          **Next Steps**:
+          - Monitor application health
+          - Check logs for any issues
+          - Verify all endpoints are working
+          EOF

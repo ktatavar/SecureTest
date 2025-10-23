@@ -1,12 +1,18 @@
-name: Terraform Deploy Infrastructure
+name: Pipeline 1 - Infrastructure Deployment (IaC)
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'terraform/**'
+      - '.github/workflows/terraform-deploy.yml'
   workflow_dispatch:
     inputs:
       action:
         description: 'Terraform action to perform'
         required: true
-        default: 'plan'
+        default: 'apply'
         type: choice
         options:
           - plan
