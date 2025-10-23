@@ -81,13 +81,29 @@ jobs:
       - name: Create terraform.tfvars from example
         working-directory: terraform
         run: |
-          if [ ! -f terraform.tfvars ]; then
-            echo "Creating terraform.tfvars from example..."
-            cp terraform.tfvars.example terraform.tfvars
-            echo "✅ terraform.tfvars created"
-          else
-            echo "✅ terraform.tfvars already exists"
-          fi
+          echo "Creating terraform.tfvars with unique names..."
+          TIMESTAMP=$(date +%s)
+          
+          cat > terraform.tfvars << EOF
+          # Terraform Variables Configuration - Auto-generated
+          aws_region = "us-east-1"
+          
+          cluster_name = "wiz-cluster-${TIMESTAMP}"
+          
+          s3_backup_bucket_name = "mongodb-backups-${TIMESTAMP}"
+          
+          ubuntu_1804_ami = "ami-0a313d6098716f372"
+          
+          tags = {
+            Project     = "Wiz-Technical-Exercise"
+            Environment = "insecure-by-design"
+            ManagedBy   = "Terraform"
+            Timestamp   = "${TIMESTAMP}"
+          }
+          EOF
+          
+          echo "✅ terraform.tfvars created with unique names"
+          cat terraform.tfvars
 
       - name: Terraform Format Check
         id: fmt

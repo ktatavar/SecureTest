@@ -3,9 +3,9 @@
 
 aws_region = "us-east-1"
 
-cluster_name = "wiz-exercise-cluster-new"
+cluster_name = "wiz-exercise-cluster"
 
-s3_backup_bucket_name = "mongodb-backups-insecure-new-${timestamp()}"  # Must be globally unique
+s3_backup_bucket_name = "mongodb-backups-insecure-12345"  # Must be globally unique - change this value
 
 # Ubuntu 18.04 AMI IDs by region (OUTDATED - for exercise purposes)
 # us-east-1: ami-0a313d6098716f372
