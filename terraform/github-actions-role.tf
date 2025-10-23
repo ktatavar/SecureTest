@@ -3,7 +3,14 @@
 
 data "aws_caller_identity" "current" {}
 
-# IAM Policy for GitHub Actions - Full permissions for Terraform operations
+# Use existing IAM policy if it exists, otherwise this will be managed outside Terraform
+data "aws_iam_policy" "github_actions_terraform" {
+  name = "GitHubActionsTerraformPolicy"
+}
+
+# Commented out - policy already exists and is managed by setup script
+# Uncomment if you want Terraform to manage the policy
+/*
 resource "aws_iam_policy" "github_actions_terraform" {
   name        = "GitHubActionsTerraformPolicy"
   description = "Permissions for GitHub Actions to run Terraform and deploy infrastructure"
@@ -176,15 +183,21 @@ resource "aws_iam_policy" "github_actions_terraform" {
     Environment = "all"
   }
 }
+*/
 
 # Attach the policy to the existing GitHub Actions role
+# This uses the data source, so it won't fail if policy already exists
 resource "aws_iam_role_policy_attachment" "github_actions_terraform" {
   role       = "GitHubActionsECRRole"
-  policy_arn = aws_iam_policy.github_actions_terraform.arn
+  policy_arn = data.aws_iam_policy.github_actions_terraform.arn
+  
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 # Output the policy ARN
 output "github_actions_policy_arn" {
   description = "ARN of the GitHub Actions Terraform policy"
-  value       = aws_iam_policy.github_actions_terraform.arn
+  value       = data.aws_iam_policy.github_actions_terraform.arn
 }
