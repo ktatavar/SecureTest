@@ -166,7 +166,7 @@ resource "aws_security_group" "mongodb_vm" {
 
 # IAM Role for MongoDB VM (OVERLY PERMISSIVE - as per requirements)
 resource "aws_iam_role" "mongodb_vm" {
-  name = "mongodb-vm-role"
+  name = "mongodb-vm-role-${var.cluster_name}"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -227,7 +227,7 @@ resource "aws_iam_role_policy" "mongodb_vm_policy" {
 }
 
 resource "aws_iam_instance_profile" "mongodb_vm" {
-  name = "mongodb-vm-profile"
+  name = "mongodb-vm-profile-${var.cluster_name}"
   role = aws_iam_role.mongodb_vm.name
 }
 
