@@ -59,6 +59,21 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
       
+      - name: Create ECR repository if it doesn't exist
+        run: |
+          # Check if repository exists
+          if ! aws ecr describe-repositories --repository-names ${{ env.IMAGE_NAME }} --region ${{ env.AWS_REGION }} 2>/dev/null; then
+            echo "ECR repository does not exist. Creating..."
+            aws ecr create-repository \
+              --repository-name ${{ env.IMAGE_NAME }} \
+              --region ${{ env.AWS_REGION }} \
+              --image-scanning-configuration scanOnPush=true \
+              --encryption-configuration encryptionType=AES256
+            echo "✅ ECR repository created: ${{ env.IMAGE_NAME }}"
+          else
+            echo "✅ ECR repository already exists: ${{ env.IMAGE_NAME }}"
+          fi
+      
       - name: Extract metadata (tags, labels)
         id: meta
         uses: docker/metadata-action@v5
