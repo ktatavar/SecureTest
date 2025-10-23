@@ -14,19 +14,12 @@ provider "aws" {
 }
 
 # VPC and Networking
-resource "aws_vpc" "main" {
-  cidr_block           = "10.0.0.0/16"
-  enable_dns_hostnames = true
-  enable_dns_support   = true
-
-  tags = {
-    Name = "wiz-exercise-vpc"
-  }
-}
+# Note: VPC creation is now managed in vpc_reuse.tf
+# This allows reusing existing VPC to avoid hitting AWS VPC limits
 
 # Public Subnet (for Load Balancer and Kubernetes public subnet)
 resource "aws_subnet" "public" {
-  vpc_id                  = aws_vpc.main.id
+  vpc_id                  = local.vpc_id
   cidr_block              = "10.0.1.0/24"
   availability_zone       = "${var.aws_region}a"
   map_public_ip_on_launch = true
@@ -40,7 +33,7 @@ resource "aws_subnet" "public" {
 
 # Private Subnet 1 (for Kubernetes pods)
 resource "aws_subnet" "private" {
-  vpc_id            = aws_vpc.main.id
+  vpc_id            = local.vpc_id
   cidr_block        = "10.0.2.0/24"
   availability_zone = "${var.aws_region}a"
 
@@ -54,7 +47,7 @@ resource "aws_subnet" "private" {
 
 # Private Subnet 2 (for Kubernetes pods - second AZ)
 resource "aws_subnet" "private_b" {
-  vpc_id            = aws_vpc.main.id
+  vpc_id            = local.vpc_id
   cidr_block        = "10.0.3.0/24"
   availability_zone = "${var.aws_region}b"
 
@@ -68,7 +61,7 @@ resource "aws_subnet" "private_b" {
 
 # Internet Gateway
 resource "aws_internet_gateway" "main" {
-  vpc_id = aws_vpc.main.id
+  vpc_id = local.vpc_id
 
   tags = {
     Name = "wiz-igw"
@@ -95,7 +88,7 @@ resource "aws_nat_gateway" "main" {
 
 # Route Tables
 resource "aws_route_table" "public" {
-  vpc_id = aws_vpc.main.id
+  vpc_id = local.vpc_id
 
   route {
     cidr_block = "0.0.0.0/0"
@@ -108,7 +101,7 @@ resource "aws_route_table" "public" {
 }
 
 resource "aws_route_table" "private" {
-  vpc_id = aws_vpc.main.id
+  vpc_id = local.vpc_id
 
   route {
     cidr_block     = "0.0.0.0/0"
@@ -139,7 +132,7 @@ resource "aws_route_table_association" "private_b" {
 resource "aws_security_group" "mongodb_vm" {
   name        = "mongodb-vm-sg"
   description = "INSECURE: Security group for MongoDB VM - SSH and MongoDB exposed to internet"
-  vpc_id      = aws_vpc.main.id
+  vpc_id      = local.vpc_id
 
   # SSH exposed to internet (INSECURE)
   ingress {
@@ -319,7 +312,7 @@ module "eks" {
   cluster_name    = var.cluster_name
   cluster_version = "1.28"
 
-  vpc_id     = aws_vpc.main.id
+  vpc_id     = local.vpc_id
   subnet_ids = [aws_subnet.public.id, aws_subnet.private.id, aws_subnet.private_b.id]
 
   enable_irsa = true
