@@ -4,7 +4,7 @@
 # Data source to find existing VPC by tag
 data "aws_vpcs" "existing" {
   tags = {
-    Name = "wiz-exercise-vpc-reusable"
+    Name = "wiz-exercise-vpc"
   }
 }
 
@@ -23,7 +23,7 @@ resource "aws_vpc" "main" {
   enable_dns_support   = true
 
   tags = {
-    Name = "wiz-exercise-vpc-reusable"
+    Name = "wiz-exercise-vpc"
   }
   
   lifecycle {
