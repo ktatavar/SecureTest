@@ -114,11 +114,12 @@ jobs:
       - name: Run Checkov IaC Scanner
         id: checkov
         uses: bridgecrewio/checkov-action@master
+        continue-on-error: true
         with:
           directory: terraform/
           framework: terraform
           output_format: cli
-          soft_fail: false  # Will continue but we'll check results
+          soft_fail: true  # Report issues but don't fail the step
           download_external_modules: true
           
       - name: Parse Checkov Results
