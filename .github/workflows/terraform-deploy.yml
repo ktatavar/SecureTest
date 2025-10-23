@@ -78,15 +78,16 @@ jobs:
           role-to-assume: ${{ steps.aws-config.outputs.role-arn }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Verify terraform.tfvars exists
+      - name: Create terraform.tfvars from example
         working-directory: terraform
         run: |
           if [ ! -f terraform.tfvars ]; then
-            echo "❌ terraform.tfvars not found!"
-            echo "Please create terraform.tfvars from terraform.tfvars.example"
-            exit 1
+            echo "Creating terraform.tfvars from example..."
+            cp terraform.tfvars.example terraform.tfvars
+            echo "✅ terraform.tfvars created"
+          else
+            echo "✅ terraform.tfvars already exists"
           fi
-          echo "✅ terraform.tfvars found"
 
       - name: Terraform Format Check
         id: fmt
