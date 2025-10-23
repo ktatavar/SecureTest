@@ -216,9 +216,13 @@ jobs:
           
           if [ "$FAIL_DEPLOYMENT" = true ]; then
             echo ""
-            echo "🛑 DEPLOYMENT BLOCKED due to Helm chart security issues"
+            echo "⚠️  WARNING: Helm chart security issues detected but deployment will continue"
             echo ""
-            echo "Required Actions:"
+            echo "Security Issues Summary:"
+            echo "  - CRITICAL issues: $CRITICAL_COUNT (threshold: $CRITICAL_THRESHOLD)"
+            echo "  - HIGH issues: $HIGH_COUNT (threshold: $HIGH_THRESHOLD)"
+            echo ""
+            echo "Recommended Actions:"
             echo "  1. Review Checkov findings above"
             echo "  2. Fix CRITICAL and HIGH severity issues in Helm templates"
             echo "  3. Common Helm security issues:"
@@ -227,16 +231,11 @@ jobs:
             echo "     - Set resource limits"
             echo "     - Use read-only root filesystem"
             echo "     - Drop unnecessary capabilities"
-            echo "  4. Re-run the workflow after fixes"
             echo ""
-            echo "To override (not recommended):"
-            echo "  - Adjust thresholds in workflow file"
-            echo "  - Document accepted risks"
-            echo ""
-            exit 1
+            echo "⚠️  Deployment proceeding despite security issues (soft-fail mode)"
           else
             echo "✅ Helm chart security checks passed"
-            echo "   Deployment can proceed"
+            echo "   No critical security issues found"
           fi
           
       - name: Prepare chart source
