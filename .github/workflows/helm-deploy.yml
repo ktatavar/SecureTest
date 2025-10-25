@@ -75,11 +75,22 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+      
+      - name: Derive AWS Role ARN
+        id: aws-role
+        run: |
+          REPO_OWNER="${{ github.repository_owner }}"
+          REPO_NAME="${{ github.event.repository.name }}"
+          AWS_ACCOUNT_ID="512231857943"
+          ROLE_NAME="GitHubActionsECRRole"
+          ROLE_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:role/${ROLE_NAME}"
+          echo "role-arn=${ROLE_ARN}" >> $GITHUB_OUTPUT
+          echo "Using Role ARN: ${ROLE_ARN}"
         
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-to-assume: ${{ steps.aws-role.outputs.role-arn }}
           aws-region: ${{ env.AWS_REGION }}
           
       - name: Verify AWS identity
