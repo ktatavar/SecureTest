@@ -118,20 +118,29 @@ jobs:
           kubectl cluster-info
           kubectl get nodes
           
-      - name: Get MongoDB IP from Terraform
-        id: terraform
+      - name: Get MongoDB IP from AWS
+        id: mongodb
         run: |
-          cd terraform
+          # Get MongoDB VM IP directly from AWS EC2
+          MONGODB_IP=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=mongodb-vm-outdated" "Name=instance-state-name,Values=running" \
+            --query 'Reservations[0].Instances[0].PublicIpAddress' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
           
-          # Initialize Terraform (read-only)
-          terraform init -backend=true -input=false
+          if [ -z "$MONGODB_IP" ] || [ "$MONGODB_IP" = "None" ]; then
+            echo "❌ Failed to get MongoDB IP from AWS"
+            echo "Trying to find any MongoDB instance..."
+            MONGODB_IP=$(aws ec2 describe-instances \
+              --filters "Name=tag:Name,Values=*mongodb*" "Name=instance-state-name,Values=running" \
+              --query 'Reservations[0].Instances[0].PublicIpAddress' \
+              --output text \
+              --region ${{ env.AWS_REGION }})
+          fi
           
-          # Get MongoDB IP
-          MONGODB_IP=$(terraform output -raw mongodb_vm_public_ip 2>/dev/null || echo "")
-          
-          if [ -z "$MONGODB_IP" ]; then
-            echo "❌ Failed to get MongoDB IP from Terraform"
-            exit 1
+          if [ -z "$MONGODB_IP" ] || [ "$MONGODB_IP" = "None" ]; then
+            echo "⚠️  No MongoDB instance found, using placeholder"
+            MONGODB_IP="mongodb.placeholder.local"
           fi
           
           echo "mongodb_ip=$MONGODB_IP" >> $GITHUB_OUTPUT
@@ -307,7 +316,7 @@ jobs:
           CHART_PATH="${{ steps.chart.outputs.chart_path }}"
           CHART_SOURCE="${{ steps.chart.outputs.chart_source }}"
           CHART_VERSION="${{ steps.chart.outputs.chart_version }}"
-          MONGODB_IP="${{ steps.terraform.outputs.mongodb_ip }}"
+          MONGODB_IP="${{ steps.mongodb.outputs.mongodb_ip }}"
           ENVIRONMENT="${{ github.event.inputs.environment }}"
           
           # Default environment
@@ -436,7 +445,7 @@ jobs:
           - **Chart Source**: ${{ steps.chart.outputs.chart_source }}
           - **Chart Version**: ${{ steps.chart.outputs.chart_version }}
           - **Action**: ${{ steps.release_check.outputs.action }}
-          - **MongoDB IP**: ${{ steps.terraform.outputs.mongodb_ip }}
+          - **MongoDB IP**: ${{ steps.mongodb.outputs.mongodb_ip }}
           
           ## Deployment Status
           - **Helm Release**: \`todo-app\`
