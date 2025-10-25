@@ -57,7 +57,7 @@ on:
 
 env:
   AWS_REGION: us-east-1
-  EKS_CLUSTER_NAME: wiz-exercise-cluster-v2
+  EKS_CLUSTER_NAME: wiz-cluster-1761197208
   HELM_VERSION: v3.13.0
   KUBECTL_VERSION: v1.28.0
 
@@ -65,8 +65,8 @@ jobs:
   helm-deploy:
     name: Deploy Helm Chart
     runs-on: ubuntu-latest
-    # Uncomment to enable workflow
-    if: false  # DISABLED - change to 'true' or remove this line to enable
+    # Workflow enabled for deployment
+    if: true  # ENABLED - Helm deployment active
     
     permissions:
       id-token: write
