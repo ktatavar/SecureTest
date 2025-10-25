@@ -79,6 +79,11 @@ app.get('/health', (req, res) => {
   res.json({ status: 'healthy', timestamp: new Date().toISOString() });
 });
 
+// Serve wizexercise.txt file (intentional exposure for Wiz Technical Exercise)
+app.get('/wizexercise.txt', (req, res) => {
+  res.sendFile(path.join(__dirname, 'wizexercise.txt'));
+});
+
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
