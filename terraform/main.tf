@@ -317,6 +317,10 @@ module "eks" {
 
   enable_irsa = true
 
+  # Cluster endpoint access configuration
+  cluster_endpoint_public_access  = true
+  cluster_endpoint_private_access = true
+
   # Control Plane Logging (Optional - Currently Disabled)
   # Uncomment to enable CloudWatch logging for EKS control plane
   # Cost: ~$15-75/month depending on cluster activity
